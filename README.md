@@ -38,12 +38,12 @@ periodic background thread that will run an action given the current pad state
 
 If for some strange reason you want to build this:
 
-    $ git clone http://github.com/zearen-wover/lambdapad.git
-    $ git clone http://github.com/haskell-game/sdl2.git
-    $ cd lambdapad
-    $ cabal sandbox init
-    $ cabal sandbox add-source ../sdl2
-    $ cabal install --dependencies-only
-    $ cabal configure
-    $ cabal build
-    $ ./dist/build/lambdapad/lambdapad
+    git clone http://github.com/zearen-wover/lambdapad.git
+    git clone http://github.com/haskell-game/sdl2.git
+    cd lambdapad
+    cabal sandbox init
+    cabal sandbox add-source ../sdl2
+    cabal install --dependencies-only
+    cabal configure
+    cabal build
+    ./dist/build/lambdapad/lambdapad
