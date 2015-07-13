@@ -17,6 +17,8 @@ module Game.LambdaPad
   , PadConfig(..) 
   , simpleButtonConfig
   , simpleHatConfig
+  , simpleAxisConfig
+  , axisConfig, triggerConfig
   -- Events
   {-
   , Event

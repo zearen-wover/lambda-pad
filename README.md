@@ -30,4 +30,20 @@ write these files.
 TODO: Fill this out.
 
 This is a state monad that tracks logical button presses and then sends commands
-when certain conditions are met (e.g. A and B are pressed).
+when certain conditions are met (e.g. A and B are pressed).  There is also a
+periodic background thread that will run an action given the current pad state
+(useful for moving the mouse).
+
+# Building
+
+If for some strange reason you want to build this:
+
+    $ git clone http://github.com/zearen-wover/lambdapad.git
+    $ git clone http://github.com/haskell-game/sdl2.git
+    $ cd lambdapad
+    $ cabal sandbox init
+    $ cabal sandbox add-source ../sdl2
+    $ cabal install --dependencies-only
+    $ cabal configure
+    $ cabal build
+    $ ./dist/build/lambdapad/lambdapad

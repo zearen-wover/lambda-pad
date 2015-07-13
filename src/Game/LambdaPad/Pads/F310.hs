@@ -1,7 +1,5 @@
 module Game.LambdaPad.Pads.F310 ( f310 ) where
 
-import Control.Monad.Trans ( liftIO )
-
 import Game.LambdaPad
 
 f310 :: PadConfig user
@@ -30,6 +28,12 @@ f310 = PadConfig
         , (8, Just W)
         , (9, Just NW)
         ]
-    , onAxis = \axis raw -> liftIO $ putStrLn $
-          "Axis " ++ show axis ++ " is " ++ show raw
+    , onAxis = simpleAxisConfig
+        [ (0, axisConfig negate $ leftStick.horiz)
+        , (1, axisConfig id $ leftStick.vert)
+        , (2, triggerConfig $ leftTrigger)
+        , (3, axisConfig negate $ rightStick.horiz)
+        , (4, axisConfig id $ rightStick.vert)
+        , (5, triggerConfig $ rightTrigger)
+        ]
     }

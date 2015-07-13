@@ -10,11 +10,10 @@ import Control.Concurrent.MVar
 import Control.Monad ( when )
 import Control.Monad.State.Strict ( StateT, runStateT, get )
 import Control.Monad.Trans ( MonadIO, liftIO, lift )
-import Data.Functor.Identity ( Identity )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
-import Control.Lens ( Lens', lens, (.=), use )
+import Control.Lens ( ALens', Lens', lens, (.=), use, cloneLens )
 import Prelude hiding ( (.), id )
 import Control.Category ( (.), id )
 import Control.Lens.TH ( makeLenses )
@@ -122,20 +121,35 @@ data LambdaPadData user = LambdaPadData
 makeLenses ''LambdaPadData
 
 simpleButtonConfig :: 
-  -- This is just [(Word8, Lens' Pad Button)]
-  [(Word8, (Button -> Identity Button) -> Pad -> Identity Pad)] ->
+  [(Word8, ALens' Pad Button)] ->
   Word8 -> Bool -> LambdaPad user ()
 simpleButtonConfig rawMapping button isPressed =
     flip (maybe $ return ()) (HM.lookup button mapping) $ \but ->
-    (lpPad.but.pressed) .= isPressed
+    (lpPad.cloneLens but.pressed) .= isPressed
   where !mapping = HM.fromList rawMapping 
 
 simpleHatConfig ::
   Word8 -> [(Word8, Maybe Dir)] -> Word8 -> Word8 -> LambdaPad user ()
 simpleHatConfig hatIndex rawMapping hat dirWord = when (hatIndex == hat) $
-    flip (maybe $ return ()) (HM.lookup dirWord mapping) $
+    flip (maybe $ return ()) (HM.lookup dirWord mapping)
     ((lpPad.dpad.dir).=)
   where !mapping = HM.fromList rawMapping 
+
+simpleAxisConfig ::
+  [(Word8, Int16 -> LambdaPad user ())] -> Word8 -> Int16 -> LambdaPad user ()
+simpleAxisConfig rawMapping axis =
+    maybe (const $ return ()) id $ HM.lookup axis mapping
+  where !mapping = HM.fromList rawMapping 
+
+axisConfig :: (Float -> Float) -> ALens' Pad Float -> Int16 -> LambdaPad user ()
+axisConfig orient valueLens rawVal = (lpPad.cloneLens valueLens) .= val
+  where val = orient $ fromIntegral rawVal / fromIntegral (minBound :: Int16)
+
+triggerConfig :: ALens' Pad Trigger -> Int16 -> LambdaPad user ()
+triggerConfig trig rawVal = (lpPad.cloneLens trig.pull) .= val
+  where val = (fromIntegral rawVal - fromIntegral (minBound :: Int16)) /
+              (fromIntegral (maxBound :: Int16) -
+               fromIntegral (minBound :: Int16))
 
 withLambdaPad :: LambdaPad user a -> LambdaPadInner user a
 withLambdaPad act = do
