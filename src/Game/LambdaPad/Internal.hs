@@ -1,6 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Game.LambdaPad.Internal where
 
@@ -11,12 +10,16 @@ import Control.Concurrent.MVar
 import Control.Monad ( when )
 import Control.Monad.State.Strict ( StateT, runStateT, get )
 import Control.Monad.Trans ( MonadIO, liftIO, lift )
+import Data.Functor.Identity ( Identity )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
-import Control.Lens ( Lens', lens)
+import Control.Lens ( Lens', lens, (.=), use )
+import Prelude hiding ( (.), id )
+import Control.Category ( (.), id )
 import Control.Lens.TH ( makeLenses )
 
+import qualified Data.HashMap as HM
 import qualified Data.Vector as V
 import qualified SDL
 import qualified Test.Robot as Robot
@@ -101,23 +104,38 @@ type LambdaPad user = StateT (LambdaPadData user) Robot.Robot
 
 type LambdaPadInner user = StateT (MVar (LambdaPadData user)) Robot.Robot
 
-data PadConfig  = PadConfig
-    { onButton :: forall user. Word8 -> Bool -> LambdaPad user ()
-    , onHat :: forall user. Word8 -> Word8 -> LambdaPad user ()
-    , onAxis :: forall user. Word8 -> Int16 -> LambdaPad user ()
+data PadConfig user = PadConfig
+    { onButton :: Word8 -> Bool -> LambdaPad user ()
+    , onHat :: Word8 -> Word8 -> LambdaPad user ()
+    , onAxis :: Word8 -> Int16 -> LambdaPad user ()
     }
-
 data LambdaPadData user = LambdaPadData
-    { lpUserData :: !user
-    , lpJoystick :: SDL.Joystick
-    , lpPad :: !Pad
-    -- , lpPeriodicEvent :: LambdaPad user ()
-    -- , lpPeriod :: Int -- ?
-    , lpPadConfig :: !PadConfig
-    -- , lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
-    -- , lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
+    { _lpUserData :: !user
+    , _lpJoystick :: SDL.Joystick
+    , _lpPad :: !Pad
+    -- , _lpPeriodicEvent :: LambdaPad user ()
+    -- , _lpPeriod :: Int -- ?
+    , _lpPadConfig :: !(PadConfig user)
+    -- , _lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
+    -- , _lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
     }
 makeLenses ''LambdaPadData
+
+simpleButtonConfig :: 
+  -- This is just [(Word8, Lens' Pad Button)]
+  [(Word8, (Button -> Identity Button) -> Pad -> Identity Pad)] ->
+  Word8 -> Bool -> LambdaPad user ()
+simpleButtonConfig rawMapping button isPressed =
+    flip (maybe $ return ()) (HM.lookup button mapping) $ \but ->
+    (lpPad.but.pressed) .= isPressed
+  where !mapping = HM.fromList rawMapping 
+
+simpleHatConfig ::
+  Word8 -> [(Word8, Maybe Dir)] -> Word8 -> Word8 -> LambdaPad user ()
+simpleHatConfig hatIndex rawMapping hat dirWord = when (hatIndex == hat) $
+    flip (maybe $ return ()) (HM.lookup dirWord mapping) $
+    ((lpPad.dpad.dir).=)
+  where !mapping = HM.fromList rawMapping 
 
 withLambdaPad :: LambdaPad user a -> LambdaPadInner user a
 withLambdaPad act = do
@@ -126,7 +144,7 @@ withLambdaPad act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
-lambdaPad :: user -> PadConfig -> IO ()
+lambdaPad :: user -> PadConfig user -> IO ()
 lambdaPad userData padConfig = do
     SDL.initialize [SDL.InitJoystick]
     numSticks <- SDL.numJoysticks
@@ -135,10 +153,10 @@ lambdaPad userData padConfig = do
       joystick <- SDL.openJoystick $ V.head joysticks
       putStrLn "Starting to listen."
       (stop, _) <- runLoopIn $ initLambdaPad $ LambdaPadData
-          { lpUserData = userData
-          , lpJoystick = joystick
-          , lpPadConfig = padConfig
-          , lpPad = neutralPad
+          { _lpUserData = userData
+          , _lpJoystick = joystick
+          , _lpPadConfig = padConfig
+          , _lpPad = neutralPad
           }
       _ <- getLine
       stopLoop stop
@@ -175,20 +193,23 @@ listen :: LambdaPadInner user ()
 listen = SDL.waitEventTimeout 1000 >>=
     maybe (return ()) (withLambdaPad . listen')
   where listen' :: SDL.Event -> LambdaPad user ()
-        listen' SDL.Event{SDL.eventPayload} =
+        listen' SDL.Event{SDL.eventPayload} = do
             case eventPayload of
               SDL.JoyButtonEvent (SDL.JoyButtonEventData
-                {SDL.joyButtonEventButton, SDL.joyButtonEventState}) ->
+                {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
+                  on <- fmap onButton $ use lpPadConfig
                   case joyButtonEventState of
-                    1 -> liftIO $ putStrLn $ "press " ++ show joyButtonEventButton 
-                    0 -> liftIO $ putStrLn $ "release " ++ show joyButtonEventButton 
-                    _ -> return ()
-              SDL.JoyAxisEvent (SDL.JoyAxisEventData
-                {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) ->
-                  liftIO $ putStrLn $ concat
-                      ["tilt ", show joyAxisEventAxis, " to ", show joyAxisEventValue]
+                    0 -> on joyButtonEventButton False
+                    1 -> on joyButtonEventButton True
+                    _ -> liftIO $ putStrLn $
+                      "Unrecognized button state: " ++ show joyButtonEventState
               SDL.JoyHatEvent (SDL.JoyHatEventData
-                {SDL.joyHatEventHat, SDL.joyHatEventValue}) ->
-                  liftIO $ putStrLn $ concat
-                      ["hat ", show joyHatEventHat, " is ", show joyHatEventValue]
+                {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
+                  on <- fmap onHat $ use lpPadConfig
+                  on joyHatEventHat joyHatEventValue
+              SDL.JoyAxisEvent (SDL.JoyAxisEventData
+                {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
+                  on <- fmap onAxis $ use lpPadConfig
+                  on joyAxisEventAxis joyAxisEventValue
               _ -> return ()
+            use lpPad >>= liftIO . print

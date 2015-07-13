@@ -15,6 +15,8 @@ module Game.LambdaPad
   , leftStick, rightStick
   -- Pad configuration
   , PadConfig(..) 
+  , simpleButtonConfig
+  , simpleHatConfig
   -- Events
   {-
   , Event
