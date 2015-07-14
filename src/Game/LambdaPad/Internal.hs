@@ -8,12 +8,12 @@ import Control.Concurrent
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
 import Control.Monad ( when )
-import Control.Monad.State.Strict ( StateT, runStateT, get )
-import Control.Monad.Trans ( MonadIO, liftIO, lift )
+import Control.Monad.State.Strict ( StateT, evalStateT, execStateT, runStateT, get )
+import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
-import Control.Lens ( ALens', Lens', lens, (.=), use, cloneLens )
+import Control.Lens ( ALens', Lens', lens, (.=), (^.), use, cloneLens )
 import Prelude hiding ( (.), id )
 import Control.Category ( (.), id )
 import Control.Lens.TH ( makeLenses )
@@ -21,9 +21,8 @@ import Control.Lens.TH ( makeLenses )
 import qualified Data.HashMap as HM
 import qualified Data.Vector as V
 import qualified SDL
-import qualified Test.Robot as Robot
 
-newtype Stop = Stop (MVar ())
+newtype Stop = Stop {stop :: IO ()}
 
 data Button = Button
     { _pressed :: !Bool
@@ -99,9 +98,9 @@ neutralPad = Pad
     , _rightStick = Axis 0.0 0.0
     }
 
-type LambdaPad user = StateT (LambdaPadData user) Robot.Robot
+type LambdaPad user = StateT (LambdaPadData user) IO
 
-type LambdaPadInner user = StateT (MVar (LambdaPadData user)) Robot.Robot
+type LambdaPadInner user = StateT (MVar (LambdaPadData user)) IO
 
 data PadConfig user = PadConfig
     { onButton :: Word8 -> Bool -> LambdaPad user ()
@@ -112,8 +111,8 @@ data LambdaPadData user = LambdaPadData
     { _lpUserData :: !user
     , _lpJoystick :: SDL.Joystick
     , _lpPad :: !Pad
-    -- , _lpPeriodicEvent :: LambdaPad user ()
-    -- , _lpPeriod :: Int -- ?
+    , _lpOnTick :: LambdaPad user ()
+    , _lpInterval :: Float -- ^ In seconds.
     , _lpPadConfig :: !(PadConfig user)
     -- , _lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
     -- , _lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
@@ -154,7 +153,7 @@ triggerConfig trig rawVal = (lpPad.cloneLens trig.pull) .= val
 withLambdaPad :: LambdaPad user a -> LambdaPadInner user a
 withLambdaPad act = do
     lambdaPadData <- liftIO . takeMVar =<< get
-    (val, lambdaPadData') <- lift $ runStateT act lambdaPadData
+    (val, lambdaPadData') <- liftIO $ runStateT act lambdaPadData
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
@@ -166,14 +165,19 @@ lambdaPad userData padConfig = do
     when (numSticks > 0) $ do
       joystick <- SDL.openJoystick $ V.head joysticks
       putStrLn "Starting to listen."
-      (stop, _) <- runLoopIn $ initLambdaPad $ LambdaPadData
+      mvarLambdaPadData <- newMVar $ LambdaPadData
           { _lpUserData = userData
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
           , _lpPad = neutralPad
+          , _lpOnTick = liftIO . print =<< use lpPad
+          , _lpInterval = 1 / 60
           }
+      eventLoop <- initEventLoop mvarLambdaPadData
+      tickLoop <- initTickLoop mvarLambdaPadData
       _ <- getLine
-      stopLoop stop
+      stop tickLoop
+      stop eventLoop
     SDL.quit
 
 type LoopIn m = m () -> m ()
@@ -182,7 +186,7 @@ runLoopIn :: MonadIO io => (LoopIn io -> IO ()) -> IO (Stop, ThreadId)
 runLoopIn acquire = do
     mvarStop <- newMVar ()
     tid <- forkIO $ acquire $ loopIn mvarStop
-    return (Stop mvarStop, tid)
+    return (Stop $ stopLoop mvarStop, tid)
   where loopIn :: MonadIO io => MVar () -> LoopIn io
         loopIn mvarStop act = do
               act
@@ -192,19 +196,19 @@ runLoopIn acquire = do
                 then liftIO $ putMVar mvarStop ()
                 else loopIn mvarStop act
 
-stopLoop :: Stop -> IO ()
-stopLoop (Stop mvarStop) = do
+stopLoop :: MVar () -> IO ()
+stopLoop mvarStop = do
     takeMVar mvarStop -- Signal readLoop
     takeMVar mvarStop -- Wait for readLoop
 
-initLambdaPad :: LambdaPadData user -> LoopIn (LambdaPadInner user) -> IO ()
-initLambdaPad initState loopIn = do
-    mvarInitState <- newMVar initState
-    _ <- Robot.runRobot $ flip runStateT mvarInitState $ loopIn listen
-    return ()
+initEventLoop :: MVar (LambdaPadData user) -> IO Stop
+initEventLoop mvarLambdaPadData = do
+    (eventLoop, _) <- runLoopIn $ \loopIn ->
+        flip evalStateT mvarLambdaPadData $ loopIn listenEvent
+    return eventLoop
 
-listen :: LambdaPadInner user ()
-listen = SDL.waitEventTimeout 1000 >>=
+listenEvent :: LambdaPadInner user ()
+listenEvent = SDL.waitEventTimeout 1000 >>=
     maybe (return ()) (withLambdaPad . listen')
   where listen' :: SDL.Event -> LambdaPad user ()
         listen' SDL.Event{SDL.eventPayload} = do
@@ -226,4 +230,28 @@ listen = SDL.waitEventTimeout 1000 >>=
                   on <- fmap onAxis $ use lpPadConfig
                   on joyAxisEventAxis joyAxisEventValue
               _ -> return ()
-            use lpPad >>= liftIO . print
+
+initTickLoop :: MVar (LambdaPadData user) -> IO Stop
+initTickLoop mvarLambdaPadData = do
+    mvarStop <- newMVar ()
+    _ <- SDL.addTimer 0 $ listenTick mvarStop mvarLambdaPadData
+    return $ Stop $ stopLoop mvarStop
+
+listenTick :: MVar () -> MVar (LambdaPadData user) -> SDL.TimerCallback
+listenTick mvarStop mvarLambdaPadData _ = do
+    startTime <- SDL.ticks
+    print startTime
+    lambdaPadData <- takeMVar mvarLambdaPadData
+    lambdaPadData' <- execStateT (lambdaPadData^.lpOnTick) lambdaPadData
+    let interval = lambdaPadData'^.lpInterval
+    putMVar mvarLambdaPadData lambdaPadData'
+
+    stop <- isEmptyMVar mvarStop
+    if stop
+      then do
+        liftIO $ putMVar mvarStop ()
+        return SDL.Cancel
+      else do
+        endTime <- liftIO $ SDL.ticks
+        return $ SDL.Reschedule $
+            (floor (interval * 1000) - (endTime - startTime))

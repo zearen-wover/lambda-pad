@@ -20,18 +20,19 @@ executable lambdapad
   main-is:             lambdapad.hs
   other-modules:
     Game.LambdaPad.Pads.F310
+    Game.LambdaPad.Games.GuildWars2
   build-depends:
     base >= 4.7 && < 5.0,
     hashmap >= 1.1 && < 1.4,
     lens >= 3.0 && < 5.0,
     mtl >= 2.0 && < 3.0,
-    robot >= 1.0 && < 2.0,
     sdl2 >= 2.0 && < 3.0,
     transformers >= 0.2 && < 0.5,
-    vector >= 0.10 && < 0.11
+    vector >= 0.10 && < 0.11,
+    xhb
   hs-source-dirs: src
   default-language: Haskell2010
-  ghc-options: -Wall
+  ghc-options: -Wall -funbox-strict-fields -threaded
 
 library
   hs-source-dirs: src
@@ -45,8 +46,8 @@ library
     hashmap >= 1.1 && < 1.4,
     lens >= 3.0 && < 5.0,
     mtl >= 2.0 && < 3.0,
-    robot >= 1.0 && < 2.0,
     sdl2 >= 2.0 && < 3.0,
     transformers >= 0.2 && < 0.5,
-    vector >= 0.10 && < 0.11
-  ghc-options: -Wall -funbox-strict-fields
+    vector >= 0.10 && < 0.11,
+    xhb
+  ghc-options: -Wall -funbox-strict-fields -threaded
