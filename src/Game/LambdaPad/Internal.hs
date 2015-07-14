@@ -117,7 +117,7 @@ data LambdaPadData user = LambdaPadData
     , _lpPadConfig :: !(PadConfig user)
     -- , _lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
     -- , _lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
-    , _lpXConnection
+    , _lpXConnection :: !X.Connection
     }
 makeLenses ''LambdaPadData
 
@@ -167,13 +167,13 @@ lambdaPad userData padConfig = do
     when (numSticks > 0) $ do
       joystick <- SDL.openJoystick $ V.head joysticks
       putStrLn "Starting to listen."
-      xConn <- X.connect $ maybe (fail "Failed to connect to X") id
+      xConn <- X.connect >>= maybe (fail "Failed to connect to X") return
       mvarLambdaPadData <- newMVar $ LambdaPadData
           { _lpUserData = userData
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
           , _lpPad = neutralPad
-          , _lpOnTick = liftIO . print =<< use lpPad
+          , _lpOnTick = return ()
           , _lpInterval = 1 / 60
           , _lpXConnection = xConn
           }
@@ -244,7 +244,6 @@ initTickLoop mvarLambdaPadData = do
 listenTick :: MVar () -> MVar (LambdaPadData user) -> SDL.TimerCallback
 listenTick mvarStop mvarLambdaPadData _ = do
     startTime <- SDL.ticks
-    print startTime
     lambdaPadData <- takeMVar mvarLambdaPadData
     lambdaPadData' <- execStateT (lambdaPadData^.lpOnTick) lambdaPadData
     let interval = lambdaPadData'^.lpInterval
