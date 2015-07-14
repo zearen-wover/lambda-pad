@@ -20,6 +20,7 @@ import Control.Lens.TH ( makeLenses )
 
 import qualified Data.HashMap as HM
 import qualified Data.Vector as V
+import qualified Graphics.XHB as X
 import qualified SDL
 
 newtype Stop = Stop {stop :: IO ()}
@@ -116,6 +117,7 @@ data LambdaPadData user = LambdaPadData
     , _lpPadConfig :: !(PadConfig user)
     -- , _lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
     -- , _lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
+    , _lpXConnection
     }
 makeLenses ''LambdaPadData
 
@@ -165,6 +167,7 @@ lambdaPad userData padConfig = do
     when (numSticks > 0) $ do
       joystick <- SDL.openJoystick $ V.head joysticks
       putStrLn "Starting to listen."
+      xConn <- X.connect $ maybe (fail "Failed to connect to X") id
       mvarLambdaPadData <- newMVar $ LambdaPadData
           { _lpUserData = userData
           , _lpJoystick = joystick
@@ -172,6 +175,7 @@ lambdaPad userData padConfig = do
           , _lpPad = neutralPad
           , _lpOnTick = liftIO . print =<< use lpPad
           , _lpInterval = 1 / 60
+          , _lpXConnection = xConn
           }
       eventLoop <- initEventLoop mvarLambdaPadData
       tickLoop <- initTickLoop mvarLambdaPadData
