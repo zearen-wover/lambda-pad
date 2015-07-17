@@ -13,7 +13,7 @@ import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
-import Control.Lens ( ALens', Lens', lens, (.=), (^.), use, cloneLens )
+import Control.Lens ( ALens', Lens', lens, (.=), (^.), to, use, cloneLens )
 import Prelude hiding ( (.), id )
 import Control.Category ( (.), id )
 import Control.Lens.TH ( makeLenses )
@@ -27,36 +27,66 @@ newtype Stop = Stop {stop :: IO ()}
 
 data Button = Button
     { _pressed :: !Bool
+    , buttonHash :: !Int
     }
-  deriving (Show)
 makeLenses ''Button
 
-data Dir = N | NE | E | SE | S | SW | W | NW
+instance Show Button where 
+  show but = if but^.pressed then "but(*)" else "but( )"
+
+data Direction = C | N | NE | E | SE | S | SW | W | NW
   deriving (Show)
 
-data DPad = DPad
-    { _dir :: !(Maybe Dir)
+data Dir = Dir
+    { direction :: !Direction
+    , dirHash :: !Int
     }
   deriving (Show)
+makeLenses ''Dir
+
+data DPad = DPad
+    { _dir :: ALens' DPad Dir
+    , _c :: !Dir
+    , _n :: !Dir
+    , _ne :: !Dir
+    , _e :: !Dir
+    , _se :: !Dir
+    , _s :: !Dir
+    , _sw :: !Dir
+    , _w :: !Dir
+    , _nw :: !Dir
+    }
 makeLenses ''DPad
+
+
+instance Show DPad where
+    showsPrec _ dpad' =
+        ("dpad["++) . (dpad'^.cloneLens (dpad'^.dir).to direction.to shows) .
+        ("]"++)
 
 data Trigger = Trigger
   { _pull :: !Float
+  , triggerHash :: !Int
   }
-  deriving (Show)
 makeLenses ''Trigger
+
+instance Show Trigger where
+  showsPrec _ trig = ("trig("++) . (trig^.pull.to shows) . (')':)
 
 data Axis = Axis
     { _horiz :: !Float
     , _vert :: !Float
+    , axisHash :: !Int
     }
-  deriving (Show)
 makeLenses ''Axis
 
 tilt :: Lens' Axis (Float, Float)
 tilt = lens getter setter
-  where getter (Axis horiz' vert') = (horiz', vert')
-        setter _ (horiz', vert') = Axis horiz' vert'
+  where getter (Axis horiz' vert' _) = (horiz', vert')
+        setter (Axis _ _ h) (horiz', vert') = Axis horiz' vert' h
+
+instance Show Axis where
+  showsPrec _ axis = ("trig("++) . (axis^.tilt.to shows) . (')':)
 
 data Pad = Pad
     { _a :: !Button
@@ -79,24 +109,38 @@ data Pad = Pad
   deriving (Show)
 makeLenses ''Pad
 
-neutralPad :: Pad
-neutralPad = Pad
-    { _a = Button False
-    , _b = Button False
-    , _x = Button False
-    , _y = Button False
-    , _lb = Button False
-    , _rb = Button False
-    , _rs = Button False
-    , _ls = Button False
-    , _start = Button False
-    , _back = Button False
-    , _home = Button False
-    , _dpad = DPad Nothing
-    , _leftTrigger = Trigger 0.0
-    , _rightTrigger = Trigger 0.0
-    , _leftStick = Axis 0.0 0.0
-    , _rightStick = Axis 0.0 0.0
+emptyDPad :: DPad
+emptyDPad = DPad
+    { _dir = c
+    , _c = Dir C 0
+    , _n = Dir N 1
+    , _ne = Dir NE 2
+    , _e = Dir E 3
+    , _se = Dir SE 4
+    , _s = Dir S 5
+    , _sw = Dir SW 6
+    , _w = Dir W 7
+    , _nw = Dir NW 8
+    }
+
+emptyPad :: Pad
+emptyPad = Pad
+    { _a = Button False 0
+    , _b = Button False 1
+    , _x = Button False 2
+    , _y = Button False 3
+    , _lb = Button False 4
+    , _rb = Button False 5
+    , _rs = Button False 6
+    , _ls = Button False 7
+    , _start = Button False 8
+    , _back = Button False 9
+    , _home = Button False 10
+    , _dpad = emptyDPad
+    , _leftTrigger = Trigger 0.0 0
+    , _rightTrigger = Trigger 0.0 1
+    , _leftStick = Axis 0.0 0.0 0
+    , _rightStick = Axis 0.0 0.0 1
     }
 
 type LambdaPad user = StateT (LambdaPadData user) IO
@@ -104,10 +148,12 @@ type LambdaPad user = StateT (LambdaPadData user) IO
 type LambdaPadInner user = StateT (MVar (LambdaPadData user)) IO
 
 data PadConfig user = PadConfig
-    { onButton :: Word8 -> Bool -> LambdaPad user ()
-    , onHat :: Word8 -> Word8 -> LambdaPad user ()
-    , onAxis :: Word8 -> Int16 -> LambdaPad user ()
+    { buttonConfig :: Word8 -> Bool -> LambdaPad user (Maybe Button)
+    , dpadConfig :: Word8 -> Word8 -> LambdaPad user (Maybe Dir)
+    , axisConfig :: Word8 -> Int16
+                 -> LambdaPad user (Maybe (Either Axis Trigger))
     }
+
 data LambdaPadData user = LambdaPadData
     { _lpUserData :: !user
     , _lpJoystick :: SDL.Joystick
@@ -115,39 +161,69 @@ data LambdaPadData user = LambdaPadData
     , _lpOnTick :: LambdaPad user ()
     , _lpInterval :: Float -- ^ In seconds.
     , _lpPadConfig :: !(PadConfig user)
-    -- , _lpButtonFilter :: HM.HashMap Button [Filter, LambdaPad user ()]
-    -- , _lpAxisFilter :: HM.HashMap Axis [Filter, LambdaPad user ()]
+    -- , _lpButtonFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
+    -- , _lpDPadFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
+    -- , _lpAxisFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
     , _lpXConnection :: !X.Connection
     }
 makeLenses ''LambdaPadData
 
-simpleButtonConfig :: 
-  [(Word8, ALens' Pad Button)] ->
-  Word8 -> Bool -> LambdaPad user ()
-simpleButtonConfig rawMapping button isPressed =
-    flip (maybe $ return ()) (HM.lookup button mapping) $ \but ->
-    (lpPad.cloneLens but.pressed) .= isPressed
+simpleButtonConfig
+    :: [(Word8, ALens' Pad Button)]
+    -> Word8 -> Bool -> LambdaPad user (Maybe Button)
+simpleButtonConfig rawMapping button isPressed = do
+    case HM.lookup button mapping of
+      Nothing -> return Nothing
+      Just but -> do
+        (lpPad.cloneLens but.pressed) .= isPressed
+        fmap Just $ use $ lpPad.cloneLens but
   where !mapping = HM.fromList rawMapping 
 
-simpleHatConfig ::
-  Word8 -> [(Word8, Maybe Dir)] -> Word8 -> Word8 -> LambdaPad user ()
-simpleHatConfig hatIndex rawMapping hat dirWord = when (hatIndex == hat) $
-    flip (maybe $ return ()) (HM.lookup dirWord mapping)
-    ((lpPad.dpad.dir).=)
+simpleDPadConfig ::
+  Word8 -> [(Word8, ALens' DPad Dir)] -> Word8 -> Word8 -> LambdaPad user (Maybe Dir)
+simpleDPadConfig hatIndex rawMapping hat dirWord =
+    if hatIndex == hat
+      then do
+        case HM.lookup dirWord mapping of
+          Nothing -> return Nothing
+          Just dir' -> do
+            (lpPad.dpad.dir) .= dir'
+            fmap Just $ use $ lpPad.dpad.cloneLens dir'
+      else return Nothing
   where !mapping = HM.fromList rawMapping 
 
-simpleAxisConfig ::
-  [(Word8, Int16 -> LambdaPad user ())] -> Word8 -> Int16 -> LambdaPad user ()
-simpleAxisConfig rawMapping axis =
-    maybe (const $ return ()) id $ HM.lookup axis mapping
+simpleAxisConfig
+    :: [(Word8, Int16 -> LambdaPad user (Either Axis Trigger))]
+    -> Word8 -> Int16 -> LambdaPad user (Maybe (Either Axis Trigger))
+simpleAxisConfig rawMapping axis val =
+    case HM.lookup axis mapping of
+      Nothing -> return Nothing
+      Just axisAct -> fmap Just $ axisAct val
   where !mapping = HM.fromList rawMapping 
 
-axisConfig :: (Float -> Float) -> ALens' Pad Float -> Int16 -> LambdaPad user ()
-axisConfig orient valueLens rawVal = (lpPad.cloneLens valueLens) .= val
-  where val = orient $ fromIntegral rawVal / fromIntegral (minBound :: Int16)
+horizAxisConfig :: ALens' Pad Axis -> Int16
+                -> LambdaPad user (Either Axis Trigger)
+horizAxisConfig axis rawVal = do
+    (lpPad.cloneLens axis.horiz) .= val
+    fmap Left $ use $  lpPad.cloneLens axis
+  where val = fromIntegral (if rawVal == minBound
+                            then minBound + 1 else rawVal) /
+              fromIntegral (maxBound :: Int16)
 
-triggerConfig :: ALens' Pad Trigger -> Int16 -> LambdaPad user ()
-triggerConfig trig rawVal = (lpPad.cloneLens trig.pull) .= val
+vertAxisConfig :: ALens' Pad Axis -> Int16
+               -> LambdaPad user (Either Axis Trigger)
+vertAxisConfig axis rawVal = do
+    (lpPad.cloneLens axis.vert) .= val
+    fmap Left $ use $  lpPad.cloneLens axis
+  where val = negate $ fromIntegral
+              (1+if rawVal == maxBound then maxBound - 1 else rawVal) /
+              fromIntegral (maxBound :: Int16)
+
+triggerConfig :: ALens' Pad Trigger -> Int16
+              -> LambdaPad user (Either Axis Trigger)
+triggerConfig trig rawVal = do
+    (lpPad.cloneLens trig.pull) .= val
+    fmap Right $ use $ lpPad.cloneLens trig
   where val = (fromIntegral rawVal - fromIntegral (minBound :: Int16)) /
               (fromIntegral (maxBound :: Int16) -
                fromIntegral (minBound :: Int16))
@@ -172,8 +248,8 @@ lambdaPad userData padConfig = do
           { _lpUserData = userData
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
-          , _lpPad = neutralPad
-          , _lpOnTick = return ()
+          , _lpPad = emptyPad
+          , _lpOnTick = liftIO . print =<< use lpPad
           , _lpInterval = 1 / 60
           , _lpXConnection = xConn
           }
@@ -219,20 +295,32 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
             case eventPayload of
               SDL.JoyButtonEvent (SDL.JoyButtonEventData
                 {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
-                  on <- fmap onButton $ use lpPadConfig
-                  case joyButtonEventState of
+                  on <- fmap buttonConfig $ use lpPadConfig
+                  but <- case joyButtonEventState of
                     0 -> on joyButtonEventButton False
                     1 -> on joyButtonEventButton True
-                    _ -> liftIO $ putStrLn $
-                      "Unrecognized button state: " ++ show joyButtonEventState
+                    _ -> do
+                      liftIO $ putStrLn $ -- TODO: actual logging
+                          "Unrecognized button state: " ++
+                          show joyButtonEventState
+                      return Nothing
+                  return $ const () but
               SDL.JoyHatEvent (SDL.JoyHatEventData
                 {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
-                  on <- fmap onHat $ use lpPadConfig
-                  on joyHatEventHat joyHatEventValue
+                  on <- fmap dpadConfig $ use lpPadConfig
+                  dir' <- on joyHatEventHat joyHatEventValue
+                  return $ const () dir'
               SDL.JoyAxisEvent (SDL.JoyAxisEventData
                 {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
-                  on <- fmap onAxis $ use lpPadConfig
-                  on joyAxisEventAxis joyAxisEventValue
+                  on <- fmap axisConfig $ use lpPadConfig
+                  mbEiAxisTrig <- on joyAxisEventAxis joyAxisEventValue
+                  case mbEiAxisTrig of
+                    Nothing -> return ()
+                    Just eiAxisTrig -> do
+                      let hashVal = case eiAxisTrig of
+                              Left axis -> axisHash axis
+                              Right trig -> triggerHash trig
+                      return $ const () hashVal
               _ -> return ()
 
 initTickLoop :: MVar (LambdaPadData user) -> IO Stop

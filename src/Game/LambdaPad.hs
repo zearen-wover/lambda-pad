@@ -1,7 +1,8 @@
 module Game.LambdaPad
   ( lambdaPad, LambdaPad
   -- Pad data structure
-  , Dir (N, NE, E, SE, S, SW, W, NW)
+  , Direction (C, N, NE, E, SE, S, SW, W, NW)
+  , Dir(direction)
   , Button, pressed
   , DPad, dir
   , Trigger, pull
@@ -10,15 +11,17 @@ module Game.LambdaPad
   , a, b, x, y
   , lb, rb, ls, rs
   , back, start, home
-  , dpad  --, n, ne, e, se, s, sw, w, nw
+  , dpad, c, n, ne, e, se, s, sw, w, nw
   , leftTrigger, rightTrigger
   , leftStick, rightStick
   -- Pad configuration
-  , PadConfig(..) 
+  , PadConfig(..)
   , simpleButtonConfig
-  , simpleHatConfig
+  , simpleDPadConfig
   , simpleAxisConfig
-  , axisConfig, triggerConfig
+  , horizAxisConfig
+  , vertAxisConfig
+  , triggerConfig
   -- Events
   {-
   , Event
