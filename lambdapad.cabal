@@ -23,6 +23,7 @@ executable lambdapad
     Game.LambdaPad.Games.GuildWars2
   build-depends:
     base >= 4.7 && < 5.0,
+    cond >= 0.3 && < 0.5,
     hashmap >= 1.1 && < 1.4,
     lens >= 3.0 && < 5.0,
     mtl >= 2.0 && < 3.0,

@@ -7,15 +7,16 @@ import Control.Concurrent
   ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
-import Control.Monad ( when )
+import Control.Monad ( when, liftM )
 import Control.Monad.State.Strict ( StateT, evalStateT, execStateT, runStateT, get )
 import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
 import Control.Lens ( ALens', Lens', lens, (.=), (^.), to, use, cloneLens )
-import Prelude hiding ( (.), id )
+import Data.Bool
 import Control.Category ( (.), id )
+import Prelude hiding ( (.), (&&), (||), not, id)
 import Control.Lens.TH ( makeLenses )
 
 import qualified Data.HashMap as HM
@@ -26,13 +27,13 @@ import qualified SDL
 newtype Stop = Stop {stop :: IO ()}
 
 data Button = Button
-    { _pressed :: !Bool
+    { _butPressed :: !Bool
     , buttonHash :: !Int
     }
 makeLenses ''Button
 
 instance Show Button where 
-  show but = if but^.pressed then "but(*)" else "but( )"
+  show but = if but^.butPressed then "but(*)" else "but( )"
 
 data Direction = C | N | NE | E | SE | S | SW | W | NW
   deriving (Show)
@@ -57,7 +58,6 @@ data DPad = DPad
     , _nw :: !Dir
     }
 makeLenses ''DPad
-
 
 instance Show DPad where
     showsPrec _ dpad' =
@@ -109,39 +109,7 @@ data Pad = Pad
   deriving (Show)
 makeLenses ''Pad
 
-emptyDPad :: DPad
-emptyDPad = DPad
-    { _dir = c
-    , _c = Dir C 0
-    , _n = Dir N 1
-    , _ne = Dir NE 2
-    , _e = Dir E 3
-    , _se = Dir SE 4
-    , _s = Dir S 5
-    , _sw = Dir SW 6
-    , _w = Dir W 7
-    , _nw = Dir NW 8
-    }
-
-emptyPad :: Pad
-emptyPad = Pad
-    { _a = Button False 0
-    , _b = Button False 1
-    , _x = Button False 2
-    , _y = Button False 3
-    , _lb = Button False 4
-    , _rb = Button False 5
-    , _rs = Button False 6
-    , _ls = Button False 7
-    , _start = Button False 8
-    , _back = Button False 9
-    , _home = Button False 10
-    , _dpad = emptyDPad
-    , _leftTrigger = Trigger 0.0 0
-    , _rightTrigger = Trigger 0.0 1
-    , _leftStick = Axis 0.0 0.0 0
-    , _rightStick = Axis 0.0 0.0 1
-    }
+newtype Filter = Filter { runFilter :: Pad -> Bool }
 
 type LambdaPad user = StateT (LambdaPadData user) IO
 
@@ -161,12 +129,44 @@ data LambdaPadData user = LambdaPadData
     , _lpOnTick :: LambdaPad user ()
     , _lpInterval :: Float -- ^ In seconds.
     , _lpPadConfig :: !(PadConfig user)
-    -- , _lpButtonFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
-    -- , _lpDPadFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
-    -- , _lpAxisFilter :: HM.HashMap Word8 [Filter, LambdaPad user ()]
+    , _lpEventFilter :: HM.HashMap Int [(Filter, LambdaPad user ())]
     , _lpXConnection :: !X.Connection
     }
 makeLenses ''LambdaPadData
+
+emptyDPad :: DPad
+emptyDPad = DPad
+    { _dir = c
+    , _c = Dir C 11
+    , _n = Dir N 12
+    , _ne = Dir NE 13
+    , _e = Dir E 14
+    , _se = Dir SE 15
+    , _s = Dir S 16
+    , _sw = Dir SW 17
+    , _w = Dir W 18
+    , _nw = Dir NW 19
+    }
+
+emptyPad :: Pad
+emptyPad = Pad
+    { _a = Button False 0
+    , _b = Button False 1
+    , _x = Button False 2
+    , _y = Button False 3
+    , _lb = Button False 4
+    , _rb = Button False 5
+    , _rs = Button False 6
+    , _ls = Button False 7
+    , _start = Button False 8
+    , _back = Button False 9
+    , _home = Button False 10
+    , _dpad = emptyDPad
+    , _leftTrigger = Trigger 0.0 20
+    , _rightTrigger = Trigger 0.0 21
+    , _leftStick = Axis 0.0 0.0 22
+    , _rightStick = Axis 0.0 0.0 23
+    }
 
 simpleButtonConfig
     :: [(Word8, ALens' Pad Button)]
@@ -175,7 +175,7 @@ simpleButtonConfig rawMapping button isPressed = do
     case HM.lookup button mapping of
       Nothing -> return Nothing
       Just but -> do
-        (lpPad.cloneLens but.pressed) .= isPressed
+        (lpPad.cloneLens but.butPressed) .= isPressed
         fmap Just $ use $ lpPad.cloneLens but
   where !mapping = HM.fromList rawMapping 
 
@@ -248,6 +248,7 @@ lambdaPad userData padConfig = do
           { _lpUserData = userData
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
+          , _lpEventFilter = HM.empty
           , _lpPad = emptyPad
           , _lpOnTick = liftIO . print =<< use lpPad
           , _lpInterval = 1 / 60
@@ -292,11 +293,11 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
     maybe (return ()) (withLambdaPad . listen')
   where listen' :: SDL.Event -> LambdaPad user ()
         listen' SDL.Event{SDL.eventPayload} = do
-            case eventPayload of
+            mbHash <- case eventPayload of
               SDL.JoyButtonEvent (SDL.JoyButtonEventData
                 {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
                   on <- fmap buttonConfig $ use lpPadConfig
-                  but <- case joyButtonEventState of
+                  mbBut <- case joyButtonEventState of
                     0 -> on joyButtonEventButton False
                     1 -> on joyButtonEventButton True
                     _ -> do
@@ -304,24 +305,30 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
                           "Unrecognized button state: " ++
                           show joyButtonEventState
                       return Nothing
-                  return $ const () but
+                  return $ fmap (buttonHash) mbBut
               SDL.JoyHatEvent (SDL.JoyHatEventData
                 {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
                   on <- fmap dpadConfig $ use lpPadConfig
-                  dir' <- on joyHatEventHat joyHatEventValue
-                  return $ const () dir'
+                  (fmap.fmap) dirHash $ on joyHatEventHat joyHatEventValue
               SDL.JoyAxisEvent (SDL.JoyAxisEventData
                 {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
                   on <- fmap axisConfig $ use lpPadConfig
                   mbEiAxisTrig <- on joyAxisEventAxis joyAxisEventValue
-                  case mbEiAxisTrig of
-                    Nothing -> return ()
-                    Just eiAxisTrig -> do
-                      let hashVal = case eiAxisTrig of
-                              Left axis -> axisHash axis
-                              Right trig -> triggerHash trig
-                      return $ const () hashVal
-              _ -> return ()
+                  return $ flip fmap mbEiAxisTrig $ \eiAxisTrig -> do
+                      case eiAxisTrig of
+                        Left axis -> axisHash axis
+                        Right trig -> triggerHash trig
+              _ -> return Nothing
+            eventFilter <- use lpEventFilter
+            whenJust (mbHash >>= flip HM.lookup eventFilter) evaluateFilter
+
+evaluateFilter :: [(Filter, LambdaPad user ())] -> LambdaPad user ()
+evaluateFilter [] = return ()
+evaluateFilter ((filter, act):rest) = do
+    doAct <- fmap (runFilter filter) $ use lpPad
+    if doAct
+      then act
+      else evaluateFilter rest
 
 initTickLoop :: MVar (LambdaPadData user) -> IO Stop
 initTickLoop mvarLambdaPadData = do
@@ -346,3 +353,11 @@ listenTick mvarStop mvarLambdaPadData _ = do
         endTime <- liftIO $ SDL.ticks
         return $ SDL.Reschedule $
             (floor (interval * 1000) - (endTime - startTime))
+
+-- Utilities
+
+whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+whenJust = flip $ maybe $ return ()
+
+liftMaybe :: Monad m => Maybe a -> (a -> m b) -> m (Maybe b)
+liftMaybe mb f = maybe (return Nothing) (liftM Just . f) mb
