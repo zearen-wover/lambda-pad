@@ -8,21 +8,33 @@ import Control.Concurrent
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
 import Control.Monad ( when, liftM )
-import Control.Monad.State.Strict ( StateT, evalStateT, execStateT, runStateT, get )
+import Control.Monad.State.Strict
+    ( StateT, evalStateT, execStateT, runStateT, get )
 import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
 import Data.Algebra.Boolean ( Boolean(..) )
-import Control.Lens ( ALens', Lens', lens, (.=), (^.), to, use, cloneLens )
+import Control.Lens
+    ( ALens', Lens', lens, (.=), (%=), (^.), to, use, cloneLens )
 import Control.Category ( (.), id )
 import Prelude hiding ( (.), (&&), (||), not, id)
 import Control.Lens.TH ( makeLenses )
 
 import qualified Data.HashMap as HM
 import qualified Data.Vector as V
-import qualified Graphics.XHB as X
 import qualified SDL
+
+-- Utilities
+
+whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+whenJust = flip $ maybe $ return ()
+
+(.:) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+(.:) = (.).(.)
+infixr 1 .:
+
+-- Types, instances and lenses
 
 newtype Stop = Stop {stop :: IO ()}
 
@@ -111,16 +123,13 @@ makeLenses ''Pad
 
 newtype Filter = Filter { runFilter :: Pad -> Bool }
 
-filter :: (Pad -> Bool) -> Filter
-filter = Filter
-
-makeFilterOp = (Bool -> Bool -> Bool) -> Filter -> Filter -> Filter
+makeFilterOp :: (Bool -> Bool -> Bool) -> Filter -> Filter -> Filter
 makeFilterOp op a b = Filter $ \tf -> runFilter a tf `op` runFilter a tf
 
 instance Boolean Filter where
-  true = const True
-  false = const False
-  not = Filter . not . runFilter
+  true = Filter $ const True
+  false = Filter $ const False
+  not = Filter . (not.) . runFilter
   (&&) = makeFilterOp (&&)
   (||) = makeFilterOp (||)
   xor = makeFilterOp (/=)
@@ -145,7 +154,6 @@ data LambdaPadData user = LambdaPadData
     , _lpInterval :: Float -- ^ In seconds.
     , _lpPadConfig :: !(PadConfig user)
     , _lpEventFilter :: HM.HashMap Int [(Filter, LambdaPad user ())]
-    , _lpXConnection :: !X.Connection
     }
 makeLenses ''LambdaPadData
 
@@ -243,6 +251,46 @@ triggerConfig trig rawVal = do
               (fromIntegral (maxBound :: Int16) -
                fromIntegral (minBound :: Int16))
 
+-- Game config
+
+class ButtonLike button where
+  pressed :: ALens' Pad button -> Filter
+  pressed = not . released
+
+  released :: ALens' Pad button -> Filter
+  released = not . pressed
+
+instance ButtonLike Button where
+  pressed = Filter . (.butPressed.to id)
+
+instance ButtonLike Dir where
+  pressed aLens =
+      Filter $ \pad -> pad^.dpad.(pad^.dpad.dir).to direction.to
+      (==(pad^.cloneLens aLens.to direction))
+
+onHash :: (Pad -> Int) -> Filter -> LambdaPad user () -> LambdaPad user ()
+onHash hashGet filter' act = do
+    hashVal <- use $ lpPad.to hashGet
+    lpEventFilter %= HM.insertWith (++) hashVal [(filter', act)]
+
+onButton :: ALens' Pad Button -> Filter -> LambdaPad user ()
+         -> LambdaPad user ()
+onButton aLens = onHash . (cloneLens aLens.to buttonHash)
+
+onButtonPress :: ALens' Pad Button -> LambdaPad user () -> LambdaPad user ()
+onButtonPress aLens = onButton aLens (Filter $ cloneLens aLens^.to pressed)
+
+onButtonRelease :: ALens' Pad Button -> LambdaPad user () -> LambdaPad user ()
+onButtonRelease aLens = onButton aLens (Filter $ cloneLens aLens^.to released)
+{-
+  , onDPad
+  , onTrigger
+  , onAxis
+  , addPeriodicCallback
+-}
+
+-- Running
+
 withLambdaPad :: LambdaPad user a -> LambdaPadInner user a
 withLambdaPad act = do
     lambdaPadData <- liftIO . takeMVar =<< get
@@ -250,16 +298,15 @@ withLambdaPad act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
-lambdaPad :: user -> PadConfig user -> IO ()
-lambdaPad userData padConfig = do
+lambdaPad :: user -> PadConfig user -> LambdaPad user () -> IO ()
+lambdaPad userData padConfig gameConfig = do
     SDL.initialize [SDL.InitJoystick]
     numSticks <- SDL.numJoysticks
     joysticks <- SDL.availableJoysticks
     when (numSticks > 0) $ do
       joystick <- SDL.openJoystick $ V.head joysticks
       putStrLn "Starting to listen."
-      xConn <- X.connect >>= maybe (fail "Failed to connect to X") return
-      mvarLambdaPadData <- newMVar $ LambdaPadData
+      lambdaPadData <- execStateT gameConfig $ LambdaPadData
           { _lpUserData = userData
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
@@ -267,8 +314,8 @@ lambdaPad userData padConfig = do
           , _lpPad = emptyPad
           , _lpOnTick = liftIO . print =<< use lpPad
           , _lpInterval = 1 / 60
-          , _lpXConnection = xConn
           }
+      mvarLambdaPadData <- newMVar $ lambdaPadData
       eventLoop <- initEventLoop mvarLambdaPadData
       tickLoop <- initTickLoop mvarLambdaPadData
       _ <- getLine
@@ -368,11 +415,3 @@ listenTick mvarStop mvarLambdaPadData _ = do
         endTime <- liftIO $ SDL.ticks
         return $ SDL.Reschedule $
             (floor (interval * 1000) - (endTime - startTime))
-
--- Utilities
-
-whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
-whenJust = flip $ maybe $ return ()
-
-liftMaybe :: Monad m => Maybe a -> (a -> m b) -> m (Maybe b)
-liftMaybe mb f = maybe (return Nothing) (liftM Just . f) mb

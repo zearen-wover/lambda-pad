@@ -23,9 +23,8 @@ module Game.LambdaPad
   , vertAxisConfig
   , triggerConfig
   -- Game configuration
-  , Filter(runFilter)
-  , filter
-  , ButtonLike(pressed)
+  , Filter(Filter, runFilter)
+  , ButtonLike(pressed, released)
   , onButton
   , onButtonPress
   , onButtonRelease
