@@ -6,8 +6,9 @@ module Game.LambdaPad
   , ButtonState(Pressed, Released)
   , Button, buttonState
   , DPad, dir
-  , Trigger, pull
+  , Trigger, trigPull
   , Axis, horiz, vert
+  , HasPull(pull)
   , Pad
   , a, b, x, y
   , lb, rb, ls, rs
@@ -26,6 +27,7 @@ module Game.LambdaPad
   -- Game configuration
   , Filter(Filter, runFilter)
   , FilterWith(with)
+  , AxisFilter
   , onButton
   , onButtonPress
   , onButtonRelease
@@ -34,4 +36,5 @@ module Game.LambdaPad
   , onAxis
   , onTick
   ) where
+
 import Game.LambdaPad.Internal

@@ -82,13 +82,13 @@ instance Show DPad where
         ("]"++)
 
 data Trigger = Trigger
-  { _pull :: !Float
+  { _trigPull :: !Float
   , triggerHash :: !Int
   }
 makeLenses ''Trigger
 
 instance Show Trigger where
-  showsPrec _ trig = ("trig("++) . (trig^.pull.to shows) . (')':)
+  showsPrec _ trig = ("trig("++) . (trig^.trigPull.to shows) . (')':)
 
 data Axis = Axis
     { _horiz :: !Float
@@ -100,6 +100,16 @@ makeLenses ''Axis
 instance Show Axis where
   showsPrec _ axis = ("axis("++) . (axis^.horiz.to shows) . (","++) .
       (axis^.horiz.to shows) . (')':)
+
+class HasPull p where
+  pull :: p -> Float
+
+instance HasPull Trigger where
+  pull = (^._trigPull)
+
+instance HasPull Axis where
+  pull axis = sqrt $ (axis^.horiz.to sq) + (axis.horiz.to sq)
+    where sq x = x*x
 
 data Pad = Pad
     { _a :: !Button
@@ -122,13 +132,13 @@ data Pad = Pad
   deriving (Show)
 makeLenses ''Pad
 
-newtype Filter = Filter { runFilter :: Pad -> Bool }
+newtype Filter user = Filter { runFilter :: LambdaPadData user -> Bool }
 
 makeFilterOp :: (Bool -> Bool -> Bool) -> Filter -> Filter -> Filter
 makeFilterOp op left right = Filter $ \tf ->
     runFilter left  tf `op` runFilter right tf
 
-instance Boolean Filter where
+instance Boolean (Filter user) where
   true = Filter $ const True
   false = Filter $ const False
   not = Filter . (not.) . runFilter
@@ -155,7 +165,7 @@ data LambdaPadData user = LambdaPadData
     , _lpOnTick :: LambdaPad user ()
     , _lpInterval :: Float -- ^ In seconds.
     , _lpPadConfig :: !(PadConfig user)
-    , _lpEventFilter :: HM.HashMap Int [(Filter, LambdaPad user ())]
+    , _lpEventFilter :: HM.HashMap Int [(Filter user, LambdaPad user ())]
     }
 makeLenses ''LambdaPadData
 
@@ -247,7 +257,7 @@ vertAxisConfig axis rawVal = do
 triggerConfig :: ALens' Pad Trigger -> Int16
               -> LambdaPad user (Either Axis Trigger)
 triggerConfig trig rawVal = do
-    (lpPad.cloneLens trig.pull) .= val
+    (lpPad.cloneLens trig.trigPull) .= val
     fmap Right $ use $ lpPad.cloneLens trig
   where val = (fromIntegral rawVal - fromIntegral (minBound :: Int16)) /
               (fromIntegral (maxBound :: Int16) -
@@ -256,45 +266,58 @@ triggerConfig trig rawVal = do
 -- Game config
 
 class FilterWith input a where
-  with :: ALens' Pad input -> a -> Filter
-
+  with :: ALens' Pad input -> a -> Filter user
 
 instance FilterWith Button ButtonState where
-  with but state = Filter $ (^.cloneLens but.buttonState.to (==state))
+  with but state = Filter $ (^.lpPad.cloneLens but.buttonState.to (==state))
 
 instance FilterWith DPad Direction where
-  with dpad' direction' = Filter $ \pad ->
-      pad^.cloneLens dpad'.cloneLens (pad^.cloneLens dpad'.dir).to direction.to
+  with dpadLens direction' = Filter $ \lambdaPad ->
+      let dpad' = lambdaPadData
+      dpad'^.cloneLens (dpad'.dir).to direction.to
       (==direction')
 
-onHash :: (a -> Int) -> ALens' Pad a -> Filter -> LambdaPad user ()
+instance FilterWith Trigger (Float -> Bool) where
+  with trig pullPred = Filter $ (^.lpPad.cloneLens trig.to pull.to pullPred)
+
+data AxisFilter = Horiz (Float -> Bool)
+                | Vert (Float -> Bool)
+                | Pull (Float -> Bool)
+                | Tilt (Float, Float)
+
+whenUser :: (user -> Bool) -> Filter user
+whenUser pred = Filter $ (^.lpUserData.to pred)
+
+onHash :: (a -> Int) -> ALens' Pad a -> Filter user -> LambdaPad user ()
        -> LambdaPad user ()
 onHash aHash aLens filter' act = do
     hashVal <- use $ lpPad.cloneLens aLens.to aHash
     lpEventFilter %= HM.insertWith (++) hashVal [(filter', act)]
 
-onButton :: ALens' Pad Button -> Filter -> LambdaPad user ()
+onButton :: ALens' Pad Button -> Filter user -> LambdaPad user ()
          -> LambdaPad user ()
 onButton = onHash buttonHash
 
-onButtonPress :: ALens' Pad Button -> Filter -> LambdaPad user ()
+onButtonPress :: ALens' Pad Button -> Filter user -> LambdaPad user ()
               -> LambdaPad user ()
 onButtonPress but filter' = onButton but $
     with but Pressed && filter'
 
-onButtonRelease :: ALens' Pad Button -> Filter -> LambdaPad user ()
+onButtonRelease :: ALens' Pad Button -> Filter user -> LambdaPad user ()
                 -> LambdaPad user ()
 onButtonRelease but filter' = onButton but $ 
     with but Released && filter'
 
-onDPad :: ALens' DPad Dir -> Filter -> LambdaPad user () -> LambdaPad user ()
+onDPad :: ALens' DPad Dir -> Filter user -> LambdaPad user ()
+       -> LambdaPad user ()
 onDPad = onHash dirHash . (dpad.)
 
-onTrigger :: ALens' Pad Trigger -> Filter -> LambdaPad user ()
+onTrigger :: ALens' Pad Trigger -> Filter user -> LambdaPad user ()
          -> LambdaPad user ()
 onTrigger = onHash triggerHash
 
-onAxis :: ALens' Pad Axis -> Filter -> LambdaPad user () -> LambdaPad user ()
+onAxis :: ALens' Pad Axis -> Filter user -> LambdaPad user ()
+       -> LambdaPad user ()
 onAxis = onHash axisHash
 
 onTick :: LambdaPad user () -> LambdaPad user ()
