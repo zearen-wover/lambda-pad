@@ -7,7 +7,7 @@ module Game.LambdaPad
   , Button, buttonState
   , DPad, dir
   , Trigger, trigPull
-  , Axis, horiz, vert
+  , Axis, horiz, vert, tilt
   , HasPull(pull)
   , Pad
   , a, b, x, y
@@ -25,9 +25,11 @@ module Game.LambdaPad
   , vertAxisConfig
   , triggerConfig
   -- Game configuration
-  , Filter(Filter, runFilter)
-  , FilterWith(with)
-  , AxisFilter
+  , Filter
+  , whenPad
+  , whenUser
+  , WithFilter(with)
+  , AxisFilter(..)
   , onButton
   , onButtonPress
   , onButtonRelease

@@ -101,6 +101,29 @@ instance Show Axis where
   showsPrec _ axis = ("axis("++) . (axis^.horiz.to shows) . (","++) .
       (axis^.horiz.to shows) . (')':)
 
+-- | This is the tilt of the axis measured by the clockwise distance around the
+-- axis you are starting at up or N.  E.g. N = 0, S = 1/2, W = 1/4, and NE =
+-- 7/8.
+--
+-- A neutral stick has tilt Nothing, but this should not be used to determine
+-- whether it has any tilt due to noise.  Check instead whether the pull is
+-- greater than some small number, e.g. 0.25.
+tilt :: Axis -> Maybe Float
+tilt axis | x == 0 && y == 0 = Nothing
+          | y == 0 = Just if x > 0 then 1/4 else 3/4
+          | x == 0 = Just if y > 0 then 0 else 1/2
+          | theta > 0 = if y > 0 then theta else 0.5 + theta
+          | otherwise = if y > 0 then 1 + theta else 0.5 + theta
+  where
+    x = axis^.horiz
+    y = axis^.vert
+    -- Note that x and y are switched.  This equivalent to a flip across x = y.
+    -- Yes, y could be 0, but laziness.
+    theta = (atan $ x / y) / (2*pi)
+
+-- | This is a control that has a partial value as a deviation from neutrail,
+-- i.e. triggers and axes.  It's a value from 0 to 1 where 0 is neutral and 1 is
+-- fully displaced.
 class HasPull p where
   pull :: p -> Float
 
@@ -241,8 +264,8 @@ horizAxisConfig :: ALens' Pad Axis -> Int16
 horizAxisConfig axis rawVal = do
     (lpPad.cloneLens axis.horiz) .= val
     fmap Left $ use $  lpPad.cloneLens axis
-  where val = fromIntegral (if rawVal == minBound
-                            then minBound + 1 else rawVal) /
+  where
+    val = fromIntegral (if rawVal == minBound then minBound + 1 else rawVal) /
               fromIntegral (maxBound :: Int16)
 
 vertAxisConfig :: ALens' Pad Axis -> Int16
@@ -250,43 +273,80 @@ vertAxisConfig :: ALens' Pad Axis -> Int16
 vertAxisConfig axis rawVal = do
     (lpPad.cloneLens axis.vert) .= val
     fmap Left $ use $  lpPad.cloneLens axis
-  where val = negate $ fromIntegral
-              (1+if rawVal == maxBound then maxBound - 1 else rawVal) /
-              fromIntegral (maxBound :: Int16)
+  where
+    val = negate $ fromIntegral
+        (1+if rawVal == maxBound then maxBound - 1 else rawVal) /
+        fromIntegral (maxBound :: Int16)
 
 triggerConfig :: ALens' Pad Trigger -> Int16
               -> LambdaPad user (Either Axis Trigger)
 triggerConfig trig rawVal = do
     (lpPad.cloneLens trig.trigPull) .= val
     fmap Right $ use $ lpPad.cloneLens trig
-  where val = (fromIntegral rawVal - fromIntegral (minBound :: Int16)) /
-              (fromIntegral (maxBound :: Int16) -
-               fromIntegral (minBound :: Int16))
+  where
+    val = (fromIntegral rawVal - fromIntegral (minBound :: Int16)) /
+        (fromIntegral (maxBound :: Int16) - fromIntegral (minBound :: Int16))
 
 -- Game config
 
-class FilterWith input a where
+class WithFilter input a where
   with :: ALens' Pad input -> a -> Filter user
 
-instance FilterWith Button ButtonState where
-  with but state = Filter $ (^.lpPad.cloneLens but.buttonState.to (==state))
+whenPad :: (Pad -> Bool) -> Filter user
+whenPad = Filter . flip (^.) . (lpPad.)
 
-instance FilterWith DPad Direction where
-  with dpadLens direction' = Filter $ \lambdaPad ->
-      let dpad' = lambdaPadData
-      dpad'^.cloneLens (dpad'.dir).to direction.to
-      (==direction')
+whenUser :: (user -> Bool) -> Filter user
+whenUser pred = Filter (^.lpUserData.to pred)
 
-instance FilterWith Trigger (Float -> Bool) where
-  with trig pullPred = Filter $ (^.lpPad.cloneLens trig.to pull.to pullPred)
+instance WithFilter Button ButtonState where
+  with but state = whenPad (^.cloneLens but.buttonState.to (==state))
+
+instance WithFilter DPad Direction where
+  with dpadLens direction' = whenPad $ \pad ->
+      let dpad' = pad^.cloneLens dpadLens
+      in dpad'^.cloneLens (dpad'.dir).to direction.to (==direction')
+
+instance WithFilter Trigger (Float -> Bool) where
+  with trig pullPred = whenPad (^.cloneLens trig.to pull.to pullPred)
 
 data AxisFilter = Horiz (Float -> Bool)
                 | Vert (Float -> Bool)
                 | Pull (Float -> Bool)
-                | Tilt (Float, Float)
+                | TiltAt !Float !Float
 
-whenUser :: (user -> Bool) -> Filter user
-whenUser pred = Filter $ (^.lpUserData.to pred)
+axisWith :: ALens' Pad Axis -> (Axis -> Float) -> (Float -> Bool) -> Filter user
+axisWith aLens getFloat pred = whenPad (^.cloneLens aLens.to getFloat.to pred)
+
+instance WithFilter Axis AxisFilter where
+  with axis (Horiz pred) = axisWith axis (^.horiz)  pred
+  with axis (Vert pred) = axisWith axis (^.vert)  pred
+  with axis (Pull pred) = axisWith axis pull  pred
+  with axis (Tilt at range) =
+      whenPad (^.cloneLens axis.to tilt.to (maybe False inBounds))
+    where
+      fracPart x = abs $ x - fromIntegral (truncate x)
+      lowerBound = fracPart $ at - (range / 2)
+      upperBound = fracPart $ at + (range / 2)
+      inBounds tilt'
+          | lowerBound < upperBound =
+              lowerBound <= tilt && tilt < upperBound
+          | otherwise =
+              upperBound < tilt && tilt <= lowerBound
+
+instance WithFilter Axis Direction where
+  with axis direction' = case direction' of
+      C -> with axis $ Pull (<0.25)
+      N -> tiltAt 0
+      NE -> tiltAt $ 1/8 
+      E -> TiltAt $ 1/4
+      SE -> tiltAt $ 3/8
+      S -> tiltAt $ 1/2
+      SW -> tiltAt $ 5/8
+      W -> tiltAt $ 3/4
+      NW -> tiltAt $ 7/8
+    where
+      tiltAt at =
+          with axis (Pull (>=0.25)) && with axis (TiltAt at 1/8)
 
 onHash :: (a -> Int) -> ALens' Pad a -> Filter user -> LambdaPad user ()
        -> LambdaPad user ()
@@ -364,14 +424,15 @@ runLoopIn acquire = do
     mvarStop <- newMVar ()
     tid <- forkIO $ acquire $ loopIn mvarStop
     return (Stop $ stopLoop mvarStop, tid)
-  where loopIn :: MonadIO io => MVar () -> LoopIn io
-        loopIn mvarStop act = do
-              act
-              liftIO $ yield
-              stop <- liftIO $ isEmptyMVar mvarStop
-              if stop
-                then liftIO $ putMVar mvarStop ()
-                else loopIn mvarStop act
+  where
+    loopIn :: MonadIO io => MVar () -> LoopIn io
+    loopIn mvarStop act = do
+        act
+        liftIO $ yield
+        stop <- liftIO $ isEmptyMVar mvarStop
+        if stop
+          then liftIO $ putMVar mvarStop ()
+          else loopIn mvarStop act
 
 stopLoop :: MVar () -> IO ()
 stopLoop mvarStop = do
@@ -387,36 +448,37 @@ initEventLoop mvarLambdaPadData = do
 listenEvent :: LambdaPadInner user ()
 listenEvent = SDL.waitEventTimeout 1000 >>=
     maybe (return ()) (withLambdaPad . listen')
-  where listen' :: SDL.Event -> LambdaPad user ()
-        listen' SDL.Event{SDL.eventPayload} = do
-            mbHash <- case eventPayload of
-              SDL.JoyButtonEvent (SDL.JoyButtonEventData
-                {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
-                  on <- fmap buttonConfig $ use lpPadConfig
-                  mbBut <- case joyButtonEventState of
-                    0 -> on joyButtonEventButton Released
-                    1 -> on joyButtonEventButton Pressed
-                    _ -> do
-                      liftIO $ putStrLn $ -- TODO: actual logging
-                          "Unrecognized button state: " ++
-                          show joyButtonEventState
-                      return Nothing
-                  return $ fmap (buttonHash) mbBut
-              SDL.JoyHatEvent (SDL.JoyHatEventData
-                {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
-                  on <- fmap dpadConfig $ use lpPadConfig
-                  (fmap.fmap) dirHash $ on joyHatEventHat joyHatEventValue
-              SDL.JoyAxisEvent (SDL.JoyAxisEventData
-                {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
-                  on <- fmap axisConfig $ use lpPadConfig
-                  mbEiAxisTrig <- on joyAxisEventAxis joyAxisEventValue
-                  return $ flip fmap mbEiAxisTrig $ \eiAxisTrig -> do
-                      case eiAxisTrig of
-                        Left axis -> axisHash axis
-                        Right trig -> triggerHash trig
-              _ -> return Nothing
-            eventFilter <- use lpEventFilter
-            whenJust (mbHash >>= flip HM.lookup eventFilter) evaluateFilter
+  where
+    listen' :: SDL.Event -> LambdaPad user ()
+    listen' SDL.Event{SDL.eventPayload} = do
+        mbHash <- case eventPayload of
+          SDL.JoyButtonEvent (SDL.JoyButtonEventData
+            {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
+              on <- fmap buttonConfig $ use lpPadConfig
+              mbBut <- case joyButtonEventState of
+                0 -> on joyButtonEventButton Released
+                1 -> on joyButtonEventButton Pressed
+                _ -> do
+                  liftIO $ putStrLn $ -- TODO: actual logging
+                      "Unrecognized button state: " ++
+                      show joyButtonEventState
+                  return Nothing
+              return $ fmap (buttonHash) mbBut
+          SDL.JoyHatEvent (SDL.JoyHatEventData
+            {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
+              on <- fmap dpadConfig $ use lpPadConfig
+              (fmap.fmap) dirHash $ on joyHatEventHat joyHatEventValue
+          SDL.JoyAxisEvent (SDL.JoyAxisEventData
+            {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
+              on <- fmap axisConfig $ use lpPadConfig
+              mbEiAxisTrig <- on joyAxisEventAxis joyAxisEventValue
+              return $ flip fmap mbEiAxisTrig $ \eiAxisTrig -> do
+                  case eiAxisTrig of
+                    Left axis -> axisHash axis
+                    Right trig -> triggerHash trig
+          _ -> return Nothing
+        eventFilter <- use lpEventFilter
+        whenJust (mbHash >>= flip HM.lookup eventFilter) evaluateFilter
 
 evaluateFilter :: [(Filter, LambdaPad user ())] -> LambdaPad user ()
 evaluateFilter [] = return ()
