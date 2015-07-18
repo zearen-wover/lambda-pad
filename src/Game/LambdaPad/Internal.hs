@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Game.LambdaPad.Internal where
@@ -7,7 +8,7 @@ import Control.Concurrent
   ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
-import Control.Monad ( when, liftM )
+import Control.Monad ( when )
 import Control.Monad.State.Strict
     ( StateT, evalStateT, execStateT, runStateT, get )
 import Control.Monad.Trans ( MonadIO, liftIO )
@@ -16,12 +17,11 @@ import Data.Word ( Word8 )
 
 import Data.Algebra.Boolean ( Boolean(..) )
 import Control.Lens
-    ( ALens', Lens', lens, (.=), (%=), (^.), to, use, cloneLens )
-import Control.Category ( (.), id )
-import Prelude hiding ( (.), (&&), (||), not, id)
+    ( ALens', (.=), (%=), (^.), to, use, cloneLens )
+import Prelude hiding ( (&&), (||), not )
 import Control.Lens.TH ( makeLenses )
 
-import qualified Data.HashMap as HM
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
 import qualified SDL
 
@@ -38,17 +38,22 @@ infixr 1 .:
 
 newtype Stop = Stop {stop :: IO ()}
 
+data ButtonState = Pressed | Released
+  deriving (Show, Eq)
+
 data Button = Button
-    { _butPressed :: !Bool
+    { _buttonState :: !ButtonState
     , buttonHash :: !Int
     }
 makeLenses ''Button
 
 instance Show Button where 
-  show but = if but^.butPressed then "but(*)" else "but( )"
+  show but = case but^.buttonState of
+      Pressed -> "but(*)"
+      Released -> "but( )"
 
 data Direction = C | N | NE | E | SE | S | SW | W | NW
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Dir = Dir
     { direction :: !Direction
@@ -92,13 +97,9 @@ data Axis = Axis
     }
 makeLenses ''Axis
 
-tilt :: Lens' Axis (Float, Float)
-tilt = lens getter setter
-  where getter (Axis horiz' vert' _) = (horiz', vert')
-        setter (Axis _ _ h) (horiz', vert') = Axis horiz' vert' h
-
 instance Show Axis where
-  showsPrec _ axis = ("trig("++) . (axis^.tilt.to shows) . (')':)
+  showsPrec _ axis = ("axis("++) . (axis^.horiz.to shows) . (","++) .
+      (axis^.horiz.to shows) . (')':)
 
 data Pad = Pad
     { _a :: !Button
@@ -124,7 +125,8 @@ makeLenses ''Pad
 newtype Filter = Filter { runFilter :: Pad -> Bool }
 
 makeFilterOp :: (Bool -> Bool -> Bool) -> Filter -> Filter -> Filter
-makeFilterOp op a b = Filter $ \tf -> runFilter a tf `op` runFilter a tf
+makeFilterOp op left right = Filter $ \tf ->
+    runFilter left  tf `op` runFilter right tf
 
 instance Boolean Filter where
   true = Filter $ const True
@@ -140,7 +142,7 @@ type LambdaPad user = StateT (LambdaPadData user) IO
 type LambdaPadInner user = StateT (MVar (LambdaPadData user)) IO
 
 data PadConfig user = PadConfig
-    { buttonConfig :: Word8 -> Bool -> LambdaPad user (Maybe Button)
+    { buttonConfig :: Word8 -> ButtonState -> LambdaPad user (Maybe Button)
     , dpadConfig :: Word8 -> Word8 -> LambdaPad user (Maybe Dir)
     , axisConfig :: Word8 -> Int16
                  -> LambdaPad user (Maybe (Either Axis Trigger))
@@ -157,8 +159,8 @@ data LambdaPadData user = LambdaPadData
     }
 makeLenses ''LambdaPadData
 
-emptyDPad :: DPad
-emptyDPad = DPad
+neutralDPad :: DPad
+neutralDPad = DPad
     { _dir = c
     , _c = Dir C 11
     , _n = Dir N 12
@@ -171,20 +173,20 @@ emptyDPad = DPad
     , _nw = Dir NW 19
     }
 
-emptyPad :: Pad
-emptyPad = Pad
-    { _a = Button False 0
-    , _b = Button False 1
-    , _x = Button False 2
-    , _y = Button False 3
-    , _lb = Button False 4
-    , _rb = Button False 5
-    , _rs = Button False 6
-    , _ls = Button False 7
-    , _start = Button False 8
-    , _back = Button False 9
-    , _home = Button False 10
-    , _dpad = emptyDPad
+neutralPad :: Pad
+neutralPad = Pad
+    { _a = Button Released 0
+    , _b = Button Released 1
+    , _x = Button Released 2
+    , _y = Button Released 3
+    , _lb = Button Released 4
+    , _rb = Button Released 5
+    , _rs = Button Released 6
+    , _ls = Button Released 7
+    , _start = Button Released 8
+    , _back = Button Released 9
+    , _home = Button Released 10
+    , _dpad = neutralDPad
     , _leftTrigger = Trigger 0.0 20
     , _rightTrigger = Trigger 0.0 21
     , _leftStick = Axis 0.0 0.0 22
@@ -193,12 +195,12 @@ emptyPad = Pad
 
 simpleButtonConfig
     :: [(Word8, ALens' Pad Button)]
-    -> Word8 -> Bool -> LambdaPad user (Maybe Button)
-simpleButtonConfig rawMapping button isPressed = do
+    -> Word8 -> ButtonState -> LambdaPad user (Maybe Button)
+simpleButtonConfig rawMapping button state = do
     case HM.lookup button mapping of
       Nothing -> return Nothing
       Just but -> do
-        (lpPad.cloneLens but.butPressed) .= isPressed
+        (lpPad.cloneLens but.buttonState) .= state
         fmap Just $ use $ lpPad.cloneLens but
   where !mapping = HM.fromList rawMapping 
 
@@ -253,41 +255,50 @@ triggerConfig trig rawVal = do
 
 -- Game config
 
-class ButtonLike button where
-  pressed :: ALens' Pad button -> Filter
-  pressed = not . released
+class FilterWith input a where
+  with :: ALens' Pad input -> a -> Filter
 
-  released :: ALens' Pad button -> Filter
-  released = not . pressed
 
-instance ButtonLike Button where
-  pressed = Filter . (.butPressed.to id)
+instance FilterWith Button ButtonState where
+  with but state = Filter $ (^.cloneLens but.buttonState.to (==state))
 
-instance ButtonLike Dir where
-  pressed aLens =
-      Filter $ \pad -> pad^.dpad.(pad^.dpad.dir).to direction.to
-      (==(pad^.cloneLens aLens.to direction))
+instance FilterWith DPad Direction where
+  with dpad' direction' = Filter $ \pad ->
+      pad^.cloneLens dpad'.cloneLens (pad^.cloneLens dpad'.dir).to direction.to
+      (==direction')
 
-onHash :: (Pad -> Int) -> Filter -> LambdaPad user () -> LambdaPad user ()
-onHash hashGet filter' act = do
-    hashVal <- use $ lpPad.to hashGet
+onHash :: (a -> Int) -> ALens' Pad a -> Filter -> LambdaPad user ()
+       -> LambdaPad user ()
+onHash aHash aLens filter' act = do
+    hashVal <- use $ lpPad.cloneLens aLens.to aHash
     lpEventFilter %= HM.insertWith (++) hashVal [(filter', act)]
 
 onButton :: ALens' Pad Button -> Filter -> LambdaPad user ()
          -> LambdaPad user ()
-onButton aLens = onHash . (cloneLens aLens.to buttonHash)
+onButton = onHash buttonHash
 
-onButtonPress :: ALens' Pad Button -> LambdaPad user () -> LambdaPad user ()
-onButtonPress aLens = onButton aLens (Filter $ cloneLens aLens^.to pressed)
+onButtonPress :: ALens' Pad Button -> Filter -> LambdaPad user ()
+              -> LambdaPad user ()
+onButtonPress but filter' = onButton but $
+    with but Pressed && filter'
 
-onButtonRelease :: ALens' Pad Button -> LambdaPad user () -> LambdaPad user ()
-onButtonRelease aLens = onButton aLens (Filter $ cloneLens aLens^.to released)
-{-
-  , onDPad
-  , onTrigger
-  , onAxis
-  , addPeriodicCallback
--}
+onButtonRelease :: ALens' Pad Button -> Filter -> LambdaPad user ()
+                -> LambdaPad user ()
+onButtonRelease but filter' = onButton but $ 
+    with but Released && filter'
+
+onDPad :: ALens' DPad Dir -> Filter -> LambdaPad user () -> LambdaPad user ()
+onDPad = onHash dirHash . (dpad.)
+
+onTrigger :: ALens' Pad Trigger -> Filter -> LambdaPad user ()
+         -> LambdaPad user ()
+onTrigger = onHash triggerHash
+
+onAxis :: ALens' Pad Axis -> Filter -> LambdaPad user () -> LambdaPad user ()
+onAxis = onHash axisHash
+
+onTick :: LambdaPad user () -> LambdaPad user ()
+onTick = (lpOnTick %=) . flip (>>)
 
 -- Running
 
@@ -311,8 +322,8 @@ lambdaPad userData padConfig gameConfig = do
           , _lpJoystick = joystick
           , _lpPadConfig = padConfig
           , _lpEventFilter = HM.empty
-          , _lpPad = emptyPad
-          , _lpOnTick = liftIO . print =<< use lpPad
+          , _lpPad = neutralPad
+          , _lpOnTick = return ()
           , _lpInterval = 1 / 60
           }
       mvarLambdaPadData <- newMVar $ lambdaPadData
@@ -360,8 +371,8 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
                 {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
                   on <- fmap buttonConfig $ use lpPadConfig
                   mbBut <- case joyButtonEventState of
-                    0 -> on joyButtonEventButton False
-                    1 -> on joyButtonEventButton True
+                    0 -> on joyButtonEventButton Released
+                    1 -> on joyButtonEventButton Pressed
                     _ -> do
                       liftIO $ putStrLn $ -- TODO: actual logging
                           "Unrecognized button state: " ++

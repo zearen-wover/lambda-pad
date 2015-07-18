@@ -3,10 +3,11 @@ module Game.LambdaPad
   -- Pad data structure
   , Direction (C, N, NE, E, SE, S, SW, W, NW)
   , Dir(direction)
-  , Button, butPressed
+  , ButtonState(Pressed, Released)
+  , Button, buttonState
   , DPad, dir
   , Trigger, pull
-  , Axis, horiz, vert, tilt
+  , Axis, horiz, vert
   , Pad
   , a, b, x, y
   , lb, rb, ls, rs
@@ -24,13 +25,13 @@ module Game.LambdaPad
   , triggerConfig
   -- Game configuration
   , Filter(Filter, runFilter)
-  , ButtonLike(pressed, released)
+  , FilterWith(with)
   , onButton
   , onButtonPress
   , onButtonRelease
   , onDPad
   , onTrigger
   , onAxis
-  , addPeriodicCallback
+  , onTick
   ) where
 import Game.LambdaPad.Internal
