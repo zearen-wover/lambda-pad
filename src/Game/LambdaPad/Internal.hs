@@ -13,8 +13,8 @@ import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
 import Data.Word ( Word8 )
 
+import Data.Algebra.Boolean ( Boolean(..) )
 import Control.Lens ( ALens', Lens', lens, (.=), (^.), to, use, cloneLens )
-import Data.Bool
 import Control.Category ( (.), id )
 import Prelude hiding ( (.), (&&), (||), not, id)
 import Control.Lens.TH ( makeLenses )
@@ -110,6 +110,21 @@ data Pad = Pad
 makeLenses ''Pad
 
 newtype Filter = Filter { runFilter :: Pad -> Bool }
+
+filter :: (Pad -> Bool) -> Filter
+filter = Filter
+
+makeFilterOp = (Bool -> Bool -> Bool) -> Filter -> Filter -> Filter
+makeFilterOp op a b = Filter $ \tf -> runFilter a tf `op` runFilter a tf
+
+instance Boolean Filter where
+  true = const True
+  false = const False
+  not = Filter . not . runFilter
+  (&&) = makeFilterOp (&&)
+  (||) = makeFilterOp (||)
+  xor = makeFilterOp (/=)
+  (<-->) = makeFilterOp (==)
 
 type LambdaPad user = StateT (LambdaPadData user) IO
 
@@ -324,8 +339,8 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
 
 evaluateFilter :: [(Filter, LambdaPad user ())] -> LambdaPad user ()
 evaluateFilter [] = return ()
-evaluateFilter ((filter, act):rest) = do
-    doAct <- fmap (runFilter filter) $ use lpPad
+evaluateFilter ((filter', act):rest) = do
+    doAct <- fmap (runFilter filter') $ use lpPad
     if doAct
       then act
       else evaluateFilter rest
