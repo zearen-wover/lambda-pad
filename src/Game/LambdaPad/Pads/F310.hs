@@ -29,11 +29,11 @@ f310 = PadConfig
           , (9, NW)
           ]
     , axisConfig = simpleAxisConfig 
-          [ (0, horizAxisConfig leftStick)
-          , (1, vertAxisConfig leftStick)
+          [ (0, horizStickConfig leftStick)
+          , (1, vertStickConfig leftStick)
           , (2, triggerConfig leftTrigger)
-          , (3, horizAxisConfig rightStick)
-          , (4, vertAxisConfig rightStick)
+          , (3, horizStickConfig rightStick)
+          , (4, vertStickConfig rightStick)
           , (5, triggerConfig rightTrigger)
           ]
     }

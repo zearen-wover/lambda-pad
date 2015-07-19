@@ -18,12 +18,12 @@ import Control.Monad.State.Strict
 import Control.Monad.State.Class ( MonadState, get, put )
 import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
-import Data.Monoid ( Monoid, mempty, mappend, (<>) )
+import Data.Monoid ( Monoid, mempty, mappend, mconcat )
 import Data.Word ( Word8 )
 
 import Data.Algebra.Boolean ( Boolean(..) )
 import Control.Lens
-    ( ALens', (.=), (%=), (^.), to, use, cloneLens )
+    ( ALens', (.=), (%=), (%%=), (^.), cloneLens, to, use, view )
 import Prelude hiding ( (&&), (||), not )
 import Control.Lens.TH ( makeLenses )
 
@@ -88,41 +88,41 @@ makeLenses ''Trigger
 instance Show Trigger where
   showsPrec _ trig = ("trig("++) . (trig^.pull.to shows) . (')':)
 
-data Axis = Axis
+data Stick = Stick
     { _horiz :: !Float
     , _vert :: !Float
-    , axisHash :: !Int
+    , stickHash :: !Int
     }
-makeLenses ''Axis
+makeLenses ''Stick
 
-instance Show Axis where
-  showsPrec _ axis = ("axis("++) . (axis^.horiz.to shows) . (","++) .
-      (axis^.horiz.to shows) . (')':)
+instance Show Stick where
+  showsPrec _ stick = ("stick("++) . (stick^.horiz.to shows) . (","++) .
+      (stick^.horiz.to shows) . (')':)
 
--- | This is the tilt of the axis measured by the clockwise distance around the
--- axis you are starting at up or N.  E.g. N = 0, S = 1/2, W = 1/4, and NE =
+-- | This is the tilt of the stick measured by the clockwise distance around the
+-- stick you are starting at up or N.  E.g. N = 0, S = 1/2, W = 1/4, and NE =
 -- 7/8.
 --
 -- A neutral stick has tilt Nothing, but this should not be used to determine
 -- whether it has any tilt due to noise.  Check instead whether the push is
 -- greater than some small number, e.g. 0.2.
-tilt :: Axis -> Maybe Float
-tilt axis | x == 0 && y == 0 = Nothing
+tilt :: Stick -> Maybe Float
+tilt stick | x == 0 && y == 0 = Nothing
           | y == 0 = Just $ if x > 0 then 1/4 else 3/4
           | x == 0 = Just $ if y > 0 then 0 else 1/2
           | theta > 0 = Just $ if y > 0 then theta else 0.5 + theta
           | otherwise = Just $ if y > 0 then 1 + theta else 0.5 + theta
   where
-    x = axis^.horiz
-    y = axis^.vert
+    x = stick^.horiz
+    y = stick^.vert
     -- Note that x and y are switched.  This equivalent to a flip across x = y.
     -- Yes, y could be 0, but laziness.
     theta = (atan $ x / y) / (2*pi)
 
--- | This is the amount an axis is displaced from center, where @0.0@ is neutral
+-- | This is the amount an stick is displaced from center, where @0.0@ is neutral
 -- and @1.0@ is fully displaced.
-push :: Axis -> Float
-push axis = sqrt $ (axis^.horiz.to sq) + (axis^.vert.to sq)
+push :: Stick -> Float
+push stick = sqrt $ (stick^.horiz.to sq) + (stick^.vert.to sq)
     where sq x = min 1.0 $ x*x
 
 data Pad = Pad
@@ -140,11 +140,20 @@ data Pad = Pad
     , _dpad :: !DPad
     , _leftTrigger :: !Trigger
     , _rightTrigger :: !Trigger
-    , _leftStick :: !Axis
-    , _rightStick :: !Axis
+    , _leftStick :: !Stick
+    , _rightStick :: !Stick
     }
   deriving (Show)
 makeLenses ''Pad
+
+-- A Convenience type for referring to 'Button's on the 'Pad'
+type PadButton = ALens' Pad Button
+-- A Convenience type for referring to the 'DPad' on the 'Pad'
+type PadDPad = ALens' Pad DPad
+-- A Convenience type for referring to 'Trigger's on the 'Pad'
+type PadTrigger = ALens' Pad Trigger
+-- A Convenience type for referring to 'Stick'es on the 'Pad'
+type PadStick = ALens' Pad Stick
 
 newtype Filter user = Filter { runFilter :: LambdaPadData user -> Bool }
 
@@ -180,11 +189,12 @@ newtype GameWriter user a = GameWriter
 data PadConfig = PadConfig
     { buttonConfig :: Word8 -> ButtonState -> PadState (Maybe Button)
     , dpadConfig :: Word8 -> Word8 -> PadState (Maybe DPad)
-    , axisConfig :: Word8 -> Int16 -> PadState (Maybe (Either Axis Trigger))
+    , axisConfig :: Word8 -> Int16 -> PadState (Maybe (Either Stick Trigger))
     }
 
 data GameConfig user = GameConfig
     { newUserData :: IO user
+    , onStop :: user -> IO ()
     , onEvents :: GameWriter user ()
     }
 
@@ -193,7 +203,7 @@ data LambdaPadData user = LambdaPadData
     , _lpJoystick :: SDL.Joystick
     , _lpPad :: !Pad
     , _lpOnTick :: LambdaPad user ()
-    , _lpInterval :: Float -- ^ In seconds.
+    , _lpSpeed :: Float -- ^ In seconds.
     , _lpPadConfig :: !PadConfig
     , _lpEventFilter :: HM.HashMap Int [(Filter user, LambdaPad user ())]
     }
@@ -208,8 +218,32 @@ instance MonadReader Pad (LambdaPad user) where
   local f m = LambdaPad $ get >>=
       (liftIO . evalStateT (lpPad %= f >> runLambdaPad m))
 
+-- | This returns whether the provided 'Filter' matches the current game
+-- state.  Note this works with any 'Filter', so you can use it with 'whenUser'
+-- 'Filter's, too.
 isPad :: Filter user -> LambdaPad user Bool
 isPad = LambdaPad . flip fmap get . runFilter
+
+-- | Gets current tick speed in ticks per second.
+getSpeed :: LambdaPad user Float
+getSpeed = LambdaPad $ use lpSpeed
+
+-- | Since 'getSpeed' is typically so great
+withResidual
+    :: Float -- ^ The dead zone.
+    -> Float -- ^ The speed in units per second.
+    -> ALens' user Float -- ^ The lens to the residual.
+    -> ALens' Pad Float -- ^ The lens to the axis.
+    -> LambdaPad user Int
+withResidual deadZone unitSpeed residual axis = do
+    displacement <- view $ cloneLens axis
+    tickSpeed <- LambdaPad $ use lpSpeed
+    if abs displacement < deadZone
+      then return 0
+      else cloneLens residual %%=
+          (splitIntFrac.(+displacement * unitSpeed / tickSpeed))
+  where splitIntFrac val = (intVal, val - fromIntegral intVal)
+          where intVal = truncate val :: Int
 
 neutralPad :: Pad
 neutralPad = Pad
@@ -227,8 +261,8 @@ neutralPad = Pad
     , _dpad = DPad C 11
     , _leftTrigger = Trigger 0.0 12
     , _rightTrigger = Trigger 0.0 13
-    , _leftStick = Axis 0.0 0.0 14
-    , _rightStick = Axis 0.0 0.0 15
+    , _leftStick = Stick 0.0 0.0 14
+    , _rightStick = Stick 0.0 0.0 15
     }
 
 -- Pad Config
@@ -244,8 +278,7 @@ runLambdaPadState padState = do
     return val
 
 simpleButtonConfig
-    :: [(Word8, ALens' Pad Button)]
-    -> Word8 -> ButtonState -> PadState (Maybe Button)
+    :: [(Word8, PadButton)] -> Word8 -> ButtonState -> PadState (Maybe Button)
 simpleButtonConfig rawMapping button state = do
     case HM.lookup button mapping of
       Nothing -> return Nothing
@@ -268,32 +301,32 @@ simpleDPadConfig hatIndex rawMapping hat dirWord =
   where !mapping = HM.fromList rawMapping 
 
 simpleAxisConfig
-    :: [(Word8, Int16 -> PadState (Either Axis Trigger))]
-    -> Word8 -> Int16 -> PadState (Maybe (Either Axis Trigger))
+    :: [(Word8, Int16 -> PadState (Either Stick Trigger))]
+    -> Word8 -> Int16 -> PadState (Maybe (Either Stick Trigger))
 simpleAxisConfig rawMapping axis val =
     case HM.lookup axis mapping of
       Nothing -> return Nothing
       Just axisAct -> Just <$> axisAct val
   where !mapping = HM.fromList rawMapping 
 
-horizAxisConfig :: ALens' Pad Axis -> Int16 -> PadState (Either Axis Trigger)
-horizAxisConfig axis rawVal = do
-    (cloneLens axis.horiz) .= val
-    fmap Left $ use $ cloneLens axis
+horizStickConfig :: PadStick -> Int16 -> PadState (Either Stick Trigger)
+horizStickConfig stick rawVal = do
+    (cloneLens stick.horiz) .= val
+    fmap Left $ use $ cloneLens stick
   where
     val = fromIntegral (if rawVal == minBound then minBound + 1 else rawVal) /
               fromIntegral (maxBound :: Int16)
 
-vertAxisConfig :: ALens' Pad Axis -> Int16 -> PadState (Either Axis Trigger)
-vertAxisConfig axis rawVal = do
-    (cloneLens axis.vert) .= val
-    fmap Left $ use $ cloneLens axis
+vertStickConfig :: PadStick -> Int16 -> PadState (Either Stick Trigger)
+vertStickConfig stick rawVal = do
+    (cloneLens stick.vert) .= val
+    fmap Left $ use $ cloneLens stick
   where
     val = negate $ fromIntegral
         (1+if rawVal == maxBound then maxBound - 1 else rawVal) /
         fromIntegral (maxBound :: Int16)
 
-triggerConfig :: ALens' Pad Trigger -> Int16 -> PadState (Either Axis Trigger)
+triggerConfig :: PadTrigger -> Int16 -> PadState (Either Stick Trigger)
 triggerConfig trig rawVal = do
     (cloneLens trig.pull) .= val
     fmap Right $ use $ cloneLens trig
@@ -323,21 +356,21 @@ newtype Pull = Pull (Float -> Bool)
 instance WithFilter Trigger Pull where
   with trig (Pull pullPred) = whenPad (^.cloneLens trig.pull.to pullPred)
 
-data AxisFilter = Horiz (Float -> Bool)
+data StickFilter = Horiz (Float -> Bool)
                 | Vert (Float -> Bool)
                 | Push (Float -> Bool)
                 | Tilt (Float, Float)
 
-axisWith :: ALens' Pad Axis -> (Axis -> Float) -> (Float -> Bool) -> Filter user
-axisWith aLens getFloat axisPred = whenPad
-    (^.cloneLens aLens.to getFloat.to axisPred)
+stickWith :: PadStick -> (Stick -> Float) -> (Float -> Bool) -> Filter user
+stickWith aLens getFloat stickPred = whenPad
+    (^.cloneLens aLens.to getFloat.to stickPred)
 
-instance WithFilter Axis AxisFilter where
-  with axis (Horiz horizPred) = axisWith axis (^.horiz)  horizPred
-  with axis (Vert vertPred) = axisWith axis (^.vert) vertPred
-  with axis (Push pushPred) = axisWith axis (^.to push) pushPred
-  with axis (Tilt (at, range)) =
-      whenPad (^.cloneLens axis.to tilt.to (maybe False inBounds))
+instance WithFilter Stick StickFilter where
+  with stick (Horiz horizPred) = stickWith stick (^.horiz)  horizPred
+  with stick (Vert vertPred) = stickWith stick (^.vert) vertPred
+  with stick (Push pushPred) = stickWith stick (^.to push) pushPred
+  with stick (Tilt (at, range)) =
+      whenPad (^.cloneLens stick.to tilt.to (maybe False inBounds))
     where
       fracPart val = abs $ val - fromIntegral (truncate val :: Int)
       lowerBound = fracPart $ at - (range / 2)
@@ -348,9 +381,9 @@ instance WithFilter Axis AxisFilter where
           | otherwise =
               upperBound < tilt' && tilt' <= lowerBound
 
-instance WithFilter Axis Direction where
-  with axis dir' = case dir' of
-      C -> with axis $ Push (<0.2)
+instance WithFilter Stick Direction where
+  with stick dir' = case dir' of
+      C -> with stick $ Push (<0.2)
       N -> tiltAt 0
       NE -> tiltAt $ 1/8 
       E -> tiltAt $ 1/4
@@ -361,7 +394,7 @@ instance WithFilter Axis Direction where
       NW -> tiltAt $ 7/8
     where
       tiltAt at =
-          with axis (Push (>=0.25)) && with axis (Tilt (at, 1/8))
+          with stick (Push (>=0.25)) && with stick (Tilt (at, 1/8))
 
 onHash :: (a -> Int) -> ALens' Pad a -> Filter user -> LambdaPad user ()
        -> GameWriter user ()
@@ -369,16 +402,16 @@ onHash aHash aLens filter' act = GameWriter $ do
     hashVal <- use $ lpPad.cloneLens aLens.to aHash
     lpEventFilter %= HM.insertWith (++) hashVal [(filter', act)]
 
-onButton :: ALens' Pad Button -> Filter user -> LambdaPad user ()
+onButton :: PadButton -> Filter user -> LambdaPad user ()
          -> GameWriter user ()
 onButton = onHash buttonHash
 
-onButtonPress :: ALens' Pad Button -> Filter user -> LambdaPad user ()
+onButtonPress :: PadButton -> Filter user -> LambdaPad user ()
               -> GameWriter user ()
 onButtonPress but filter' = onButton but $
     with but Pressed && filter'
 
-onButtonRelease :: ALens' Pad Button -> Filter user -> LambdaPad user ()
+onButtonRelease :: PadButton -> Filter user -> LambdaPad user ()
                 -> GameWriter user ()
 onButtonRelease but filter' = onButton but $ 
     with but Released && filter'
@@ -390,13 +423,13 @@ onDPadDir :: Direction -> Filter user -> LambdaPad user ()
        -> GameWriter user ()
 onDPadDir dir' filter' = onDPad $ with dpad dir' && filter'
 
-onTrigger :: ALens' Pad Trigger -> Filter user -> LambdaPad user ()
+onTrigger :: PadTrigger -> Filter user -> LambdaPad user ()
          -> GameWriter user ()
 onTrigger = onHash triggerHash
 
-onAxis :: ALens' Pad Axis -> Filter user -> LambdaPad user ()
+onStick :: PadStick -> Filter user -> LambdaPad user ()
        -> GameWriter user ()
-onAxis = onHash axisHash
+onStick = onHash stickHash
 
 onTick :: LambdaPad user () -> GameWriter user ()
 onTick = GameWriter . (lpOnTick %=) . flip (>>)
@@ -410,8 +443,19 @@ withLambdaPadInner act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
+-- | Like 'lambdaPadWithSpeed', but with the speed set to 60 ticks per second.
 lambdaPad :: PadConfig -> GameConfig user -> IO Stop
-lambdaPad padConfig (GameConfig{newUserData, onEvents}) = do
+lambdaPad = lambdaPadWithSpeed 60
+
+-- | Runs LambdaPad with the given configurations.  This starts it in a
+-- background thread, but provides the user with a 'Stop' that can be used to
+-- stop. 
+--
+-- Note that this calls SDL.initialize and SDL.quit.  This library is not
+-- intended to be used within other SDL applications.
+lambdaPadWithSpeed :: Float -> PadConfig -> GameConfig user -> IO Stop
+lambdaPadWithSpeed speed padConfig
+                   (GameConfig{newUserData, onStop, onEvents}) = do
     SDL.initialize [SDL.InitJoystick]
     numSticks <- SDL.numJoysticks
     joysticks <- SDL.availableJoysticks
@@ -427,15 +471,18 @@ lambdaPad padConfig (GameConfig{newUserData, onEvents}) = do
             , _lpEventFilter = HM.empty
             , _lpPad = neutralPad
             , _lpOnTick = return ()
-            , _lpInterval = 1 / 60
+            , _lpSpeed = speed
             }
         mvarLambdaPadData <- newMVar $ lambdaPadData
         putStrLn "Starting to listen."
         eventLoop <- initEventLoop mvarLambdaPadData
         tickLoop <- initTickLoop mvarLambdaPadData
-        return $ tickLoop <> eventLoop
+        return $ mconcat [tickLoop, eventLoop, cleanUpUser mvarLambdaPadData]
       else return mempty
     return $ mappend aStop $ Stop SDL.quit
+  where cleanUpUser mvarLambdaPadData = Stop $ do
+            lambdaPadData <- takeMVar mvarLambdaPadData
+            onStop $ lambdaPadData^.lpUserData
 
 type LoopIn m = m () -> m ()
 
@@ -492,11 +539,11 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
           SDL.JoyAxisEvent (SDL.JoyAxisEventData
             {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
               on <- axisConfig <$> use lpPadConfig
-              mbEiAxisTrig <- runLambdaPadState $
+              mbEiStickTrig <- runLambdaPadState $
                   on joyAxisEventAxis joyAxisEventValue
-              return $ flip fmap mbEiAxisTrig $ \eiAxisTrig -> do
-                  case eiAxisTrig of
-                    Left axis -> axisHash axis
+              return $ flip fmap mbEiStickTrig $ \eiStickTrig -> do
+                  case eiStickTrig of
+                    Left stick -> stickHash stick
                     Right trig -> triggerHash trig
           _ -> return Nothing
         eventFilter <- use lpEventFilter
@@ -522,7 +569,7 @@ listenTick mvarStop mvarLambdaPadData _ = do
     lambdaPadData <- takeMVar mvarLambdaPadData
     lambdaPadData' <- execStateT (lambdaPadData^.lpOnTick.to runLambdaPad)
         lambdaPadData
-    let interval = lambdaPadData'^.lpInterval
+    let interval = lambdaPadData'^.lpSpeed
     putMVar mvarLambdaPadData lambdaPadData'
 
     aStop <- isEmptyMVar mvarStop
@@ -533,4 +580,4 @@ listenTick mvarStop mvarLambdaPadData _ = do
       else do
         endTime <- liftIO $ SDL.ticks
         return $ SDL.Reschedule $
-            (floor (interval * 1000) - (endTime - startTime))
+            (floor (1000 / interval) - (endTime - startTime))

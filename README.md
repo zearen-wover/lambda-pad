@@ -7,11 +7,9 @@ it.
 
 Note that this is not for muggles.  All configuration is done in Haskell similar
 to XMonad.  Knowledge of Haskell is assumed.  The profiles are launched via the
-command line.  I may develop a GTK GUI later, but it's not planned currently.
+command line.
 
 # Documentation
-
-TODO: Fill this out.
 
 To ease configuration, there's a layer of indirection between the pad
 configuration and game configuration.  The actual buttons and axes on the pad

@@ -4,6 +4,6 @@ import Game.LambdaPad.Games.GuildWars2 ( guildWars2 )
 
 main :: IO ()
 main = do
-  lpLoop <- lambdaPad f310 guildWars2
+  lpLoop <- lambdaPad f310 $ guildWars2 1.0
   _ <- getLine
   stop lpLoop
