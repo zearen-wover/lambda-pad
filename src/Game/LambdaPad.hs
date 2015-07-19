@@ -1,42 +1,19 @@
 module Game.LambdaPad
-  ( lambdaPad, LambdaPad
+  ( lambdaPad, Stop, stop
   -- Pad data structure
-  , Direction (C, N, NE, E, SE, S, SW, W, NW)
-  , Dir(direction)
   , ButtonState(Pressed, Released)
   , Button, buttonState
+  , Direction (C, N, NE, E, SE, S, SW, W, NW)
   , DPad, dir
-  , Trigger, trigPull
-  , Axis, horiz, vert, tilt
-  , HasPull(pull)
+  , Trigger, pull
+  , Axis, horiz, vert, tilt, push
   , Pad
   , a, b, x, y
   , lb, rb, ls, rs
   , back, start, home
-  , dpad, c, n, ne, e, se, s, sw, w, nw
+  , dpad
   , leftTrigger, rightTrigger
   , leftStick, rightStick
-  -- Pad configuration
-  , PadConfig(..)
-  , simpleButtonConfig
-  , simpleDPadConfig
-  , simpleAxisConfig
-  , horizAxisConfig
-  , vertAxisConfig
-  , triggerConfig
-  -- Game configuration
-  , Filter
-  , whenPad
-  , whenUser
-  , WithFilter(with)
-  , AxisFilter(..)
-  , onButton
-  , onButtonPress
-  , onButtonRelease
-  , onDPad
-  , onTrigger
-  , onAxis
-  , onTick
   ) where
 
 import Game.LambdaPad.Internal

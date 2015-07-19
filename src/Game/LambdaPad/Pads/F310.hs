@@ -1,8 +1,8 @@
 module Game.LambdaPad.Pads.F310 ( f310 ) where
 
-import Game.LambdaPad
+import Game.LambdaPad.PadConfig
 
-f310 :: PadConfig user
+f310 :: PadConfig
 f310 = PadConfig
     { buttonConfig = simpleButtonConfig
           [ (0, a)
@@ -18,15 +18,15 @@ f310 = PadConfig
           , (10, rs)
           ]
     , dpadConfig = simpleDPadConfig 0
-          [ (0, c)
-          , (1, n)
-          , (3, ne)
-          , (2, e)
-          , (6, se)
-          , (4, s)
-          , (12, sw)
-          , (8, w)
-          , (9, nw)
+          [ (0, C)
+          , (1, N)
+          , (3, NE)
+          , (2, E)
+          , (6, SE)
+          , (4, S)
+          , (12, SW)
+          , (8, W)
+          , (9, NW)
           ]
     , axisConfig = simpleAxisConfig 
           [ (0, horizAxisConfig leftStick)
