@@ -38,9 +38,9 @@ background thread that can have actions added to it.
 
 If for some strange reason you want to build this:
 
-    git clone http://github.com/zearen-wover/lambdapad.git
+    git clone http://github.com/zearen-wover/lambda-pad.git
     git clone http://github.com/haskell-game/sdl2.git
-    cd lambdapad
+    cd lambda-pad
     cabal sandbox init
     cabal sandbox add-source ../sdl2
     cabal install --dependencies-only
