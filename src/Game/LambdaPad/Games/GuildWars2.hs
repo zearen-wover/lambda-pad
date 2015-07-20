@@ -103,9 +103,9 @@ guildWars2 mouseSpeed = GameConfig
             mouseSpeed' <- fmap gw2MouseSpeed get
             moveMouse <- isPad $ mouseMode
             when moveMouse $ do
-                x' <- withResidual 0.1 mouseSpeed'
+                x' <- withResidual 0.05 mouseSpeed'
                     (gw2MouseResidual._1) (rightStick.horiz)
-                y' <- withResidual 0.1 mouseSpeed'
+                y' <- withResidual 0.05 mouseSpeed'
                     (gw2MouseResidual._2) (rightStick.vert)
                 runRobot $ moveBy x' (negate y')
     }
@@ -140,8 +140,6 @@ stickAsKey stick isTilted' stickFilter key filter' = do
         runRobot $ release key
         cloneLens isTilted' .= False
   where isTilted = cloneLens isTilted'
-
-
 
 shiftMode :: Filter user
 shiftMode = with rightTrigger $ Pull (>0.2)

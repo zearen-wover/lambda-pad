@@ -236,7 +236,7 @@ withResidual
     -> ALens' Pad Float -- ^ The lens to the axis.
     -> LambdaPad user Int
 withResidual deadZone unitSpeed residual axis = do
-    displacement <- view $ cloneLens axis
+    displacement <- view $ cloneLens axis.to sqSign
     tickSpeed <- LambdaPad $ use lpSpeed
     if abs displacement < deadZone
       then return 0
@@ -244,6 +244,7 @@ withResidual deadZone unitSpeed residual axis = do
           (splitIntFrac.(+displacement * unitSpeed / tickSpeed))
   where splitIntFrac val = (intVal, val - fromIntegral intVal)
           where intVal = truncate val :: Int
+        sqSign x = signum x*x*x
 
 neutralPad :: Pad
 neutralPad = Pad
@@ -424,11 +425,11 @@ onDPadDir :: Direction -> Filter user -> LambdaPad user ()
 onDPadDir dir' filter' = onDPad $ with dpad dir' && filter'
 
 onTrigger :: PadTrigger -> Filter user -> LambdaPad user ()
-         -> GameWriter user ()
+          -> GameWriter user ()
 onTrigger = onHash triggerHash
 
 onStick :: PadStick -> Filter user -> LambdaPad user ()
-       -> GameWriter user ()
+        -> GameWriter user ()
 onStick = onHash stickHash
 
 onTick :: LambdaPad user () -> GameWriter user ()
