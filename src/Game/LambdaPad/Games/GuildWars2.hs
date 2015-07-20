@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Game.LambdaPad.Games.GuildWars2 ( guildWars2 ) where
 
-import Control.Monad ( when )
+import Control.Monad ( replicateM_, when )
 import Control.Monad.IO.Class( liftIO )
 import Control.Monad.State.Class( get )
 import Control.Lens ( ALens', (^.), (.=), cloneLens, use, _1, _2 )
@@ -10,7 +10,7 @@ import Data.Algebra.Boolean (Boolean(..))
 import Prelude hiding ( (&&), (||),  not )
 
 import Game.LambdaPad.GameConfig
-import Test.Robot ( Robot, Pressable(press, release), moveBy )
+import Test.Robot ( Robot, Pressable(press, release), moveBy, tap )
 import Test.Robot.Connection ( runRobotWith )
 
 import qualified Graphics.XHB as X
@@ -27,8 +27,10 @@ makeLenses ''StickPress
 
 data GuildWars2 = GuildWars2
     { gw2SConn :: !X.Connection
+    , gw2ScreenSize :: !(Int, Int)
     , gw2MouseSpeed :: !Float
     , _gw2MouseResidual :: !(Float, Float)
+    , _gw2ScrollResidual :: !Float
     , _gw2UndoDir :: LambdaPad GuildWars2 ()
     , _gw2LeftStickPress :: !StickPress
     , _gw2RightStickPress :: !StickPress
@@ -40,11 +42,13 @@ guildWars2 mouseSpeed = GameConfig
     { newUserData = do
           xConn <- maybe (fail "Could not connect to X server") return =<<
               X.connect
-          (width, height) <- getScreenSize xConn
+          screenSize@(width, height) <- getScreenSize xConn
           return $ GuildWars2
               { gw2SConn = xConn
-              , gw2MouseSpeed = mouseSpeed * max width height
+              , gw2ScreenSize = screenSize
+              , gw2MouseSpeed = mouseSpeed * fromIntegral (max width height)
               , _gw2MouseResidual = (0, 0)
+              , _gw2ScrollResidual = 0
               , _gw2UndoDir = return ()
               , _gw2LeftStickPress = StickPress False False False False
               , _gw2RightStickPress = StickPress False False False False
@@ -58,10 +62,10 @@ guildWars2 mouseSpeed = GameConfig
           buttonAsKey lb K._4 true
           buttonAsKey rb K._5 true
 
-          buttonAsKey x K._6 shiftMode
-          buttonAsKey y K._7 shiftMode
-          buttonAsKey b K._8 shiftMode
-          buttonAsKey lb K._9 shiftMode
+          buttonAsKey lb K._6 shiftMode
+          buttonAsKey x K._7 shiftMode
+          buttonAsKey y K._8 shiftMode
+          buttonAsKey b K._9 shiftMode
           buttonAsKey rb K._0 shiftMode
 
           onDPadDir C true $ use gw2UndoDir >>= id >> (gw2UndoDir .= return ())
@@ -87,27 +91,33 @@ guildWars2 mouseSpeed = GameConfig
           
           buttonAsKey ls K._V true
           stickAsKey leftStick (gw2LeftStickPress.ePress) (Horiz (>0.2))
-              K._E true
+              K._E $ not mouseMode
           stickAsKey leftStick (gw2LeftStickPress.wPress) (Horiz (<(-0.2)))
-              K._Q true
+              K._Q $ not mouseMode
           stickAsKey leftStick (gw2LeftStickPress.nPress) (Vert (>0.2))
-              K._W  true
+              K._W $ not mouseMode
           stickAsKey leftStick (gw2LeftStickPress.sPress) (Vert (<(-0.2)))
-              K._S true
+              K._S $ not mouseMode
           stickAsKey rightStick (gw2RightStickPress.ePress) (Horiz (>0.2))
               K._D $ not mouseMode
           stickAsKey rightStick (gw2RightStickPress.wPress) (Horiz (<(-0.2)))
-              K._A  $ not mouseMode
+              K._A $ not mouseMode
 
           onTick $ do
             mouseSpeed' <- fmap gw2MouseSpeed get
             moveMouse <- isPad $ mouseMode
             when moveMouse $ do
-                x' <- withResidual 0.05 mouseSpeed'
-                    (gw2MouseResidual._1) (rightStick.horiz)
-                y' <- withResidual 0.05 mouseSpeed'
-                    (gw2MouseResidual._2) (rightStick.vert)
-                runRobot $ moveBy x' (negate y')
+              x' <- withResidual 0.05 mouseSpeed'
+                  (gw2MouseResidual._1) (rightStick.horiz)
+              y' <- withResidual 0.05 mouseSpeed'
+                  (gw2MouseResidual._2) (rightStick.vert)
+              scroll <- withResidual 0.05 10
+                  gw2ScrollResidual (leftStick.vert)
+              runRobot $ do
+                  moveBy x' (negate y')
+                  if scroll >= 0
+                    then replicateM_ scroll $ tap K.scrollUp
+                    else replicateM_ (negate scroll) $ tap K.scrollDown
     }
 
 runRobot :: Robot a -> LambdaPad GuildWars2 a
@@ -148,7 +158,7 @@ mouseMode :: Filter user
 mouseMode = with leftTrigger $ Pull (>0.2)
 
 -- TODO: This should be broken out into its own library.
-getScreenSize :: X.Connection -> IO (Float, Float)
+getScreenSize :: X.Connection -> IO (Int, Int)
 getScreenSize xConn = do
     receipt <- X.queryExtents xConn $ X.getRoot xConn
     eiReply <- X.getReply receipt
@@ -160,8 +170,3 @@ getScreenSize xConn = do
           , fromIntegral $
                 X.bounding_shape_extents_height_QueryExtentsReply reply
           )
-{-
-
-
-
--}

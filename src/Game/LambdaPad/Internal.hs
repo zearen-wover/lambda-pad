@@ -244,7 +244,7 @@ withResidual deadZone unitSpeed residual axis = do
           (splitIntFrac.(+displacement * unitSpeed / tickSpeed))
   where splitIntFrac val = (intVal, val - fromIntegral intVal)
           where intVal = truncate val :: Int
-        sqSign x = signum x*x*x
+        sqSign x' = signum x'*x'*x'
 
 neutralPad :: Pad
 neutralPad = Pad
@@ -462,9 +462,8 @@ lambdaPadWithSpeed speed padConfig
     joysticks <- SDL.availableJoysticks
     aStop <- if numSticks > 0
       then do
-        putStrLn "Acquiring resources."
-        joystick <- SDL.openJoystick $ V.head joysticks
         userData <- newUserData
+        joystick <- SDL.openJoystick $ V.head joysticks
         lambdaPadData <- execStateT (runGameWriter onEvents) $ LambdaPadData
             { _lpUserData = userData
             , _lpJoystick = joystick
@@ -475,7 +474,6 @@ lambdaPadWithSpeed speed padConfig
             , _lpSpeed = speed
             }
         mvarLambdaPadData <- newMVar $ lambdaPadData
-        putStrLn "Starting to listen."
         eventLoop <- initEventLoop mvarLambdaPadData
         tickLoop <- initTickLoop mvarLambdaPadData
         return $ mconcat [tickLoop, eventLoop, cleanUpUser mvarLambdaPadData]

@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                lambda-pad
-version:             0.0.0.0
+version:             0.1.0.0
 synopsis:            Allows one to control the mouse and keyboard with a gamepad.
 -- description:         
 homepage:            http://github.com/zearen-wover/lambdapad
