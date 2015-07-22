@@ -33,7 +33,7 @@ data GuildWars2 = GuildWars2
     , _gw2ScrollResidual :: !Float
     , _gw2UndoDir :: LambdaPad GuildWars2 ()
     , _gw2LeftStickPress :: !StickPress
-    , _gw2RightStickPress :: !StickPress
+    , _gw2Panning :: !Bool
     }
 makeLenses ''GuildWars2
 
@@ -51,7 +51,7 @@ guildWars2 mouseSpeed = GameConfig
               , _gw2ScrollResidual = 0
               , _gw2UndoDir = return ()
               , _gw2LeftStickPress = StickPress False False False False
-              , _gw2RightStickPress = StickPress False False False False
+              , _gw2Panning = False
               }
     , onStop = const $ return ()
     , onEvents = do
@@ -80,39 +80,46 @@ guildWars2 mouseSpeed = GameConfig
           dirAsKey W [K._Shift, K._Tab] shiftMode
 
           buttonAsKey rs K._F true
-          buttonAsKey rs K.leftButton mouseMode
-          buttonAsKey a K.leftButton mouseMode
+          buttonAsKey rs K.rightButton mouseMode
+          buttonAsKey rb K.leftButton mouseMode
 
           buttonAsKey home K._Escape true
           buttonAsKey start K._I true
-          buttonAsKey back K._M true
+          buttonAsKey back K._Grave true
           buttonAsKey start K._H shiftMode
-          buttonAsKey back K._Grave shiftMode
+          buttonAsKey back K._M shiftMode
           
           buttonAsKey ls K._V true
           stickAsKey leftStick (gw2LeftStickPress.ePress) (Horiz (>0.2))
-              K._E $ not mouseMode
+              K._E true
           stickAsKey leftStick (gw2LeftStickPress.wPress) (Horiz (<(-0.2)))
-              K._Q $ not mouseMode
+              K._Q true
           stickAsKey leftStick (gw2LeftStickPress.nPress) (Vert (>0.2))
-              K._W $ not mouseMode
+              K._W $ not (mouseMode && shiftMode)
           stickAsKey leftStick (gw2LeftStickPress.sPress) (Vert (<(-0.2)))
-              K._S $ not mouseMode
-          stickAsKey rightStick (gw2RightStickPress.ePress) (Horiz (>0.2))
-              K._D $ not mouseMode
-          stickAsKey rightStick (gw2RightStickPress.wPress) (Horiz (<(-0.2)))
-              K._A $ not mouseMode
+              K._S $ not (mouseMode && shiftMode)
+
+          stickAsKey rightStick gw2Panning (Push (>0.05))
+              K.rightButton $ not mouseMode
+          -- If we enter mouse mode, we should stop panning.
+          onTrigger leftTrigger (mouseMode && whenUser (^.gw2Panning)) $ do
+              runRobot $ release K.rightButton
+              gw2Panning .= False
 
           onTick $ do
-            mouseSpeed' <- fmap gw2MouseSpeed get
             moveMouse <- isPad $ mouseMode
-            when moveMouse $ do
-              x' <- withResidual 0.05 mouseSpeed'
-                  (gw2MouseResidual._1) (rightStick.horiz)
-              y' <- withResidual 0.05 mouseSpeed'
-                  (gw2MouseResidual._2) (rightStick.vert)
-              scroll <- withResidual 0.05 10
-                  gw2ScrollResidual (leftStick.vert)
+            isPanning <- use $ gw2Panning
+            when (moveMouse || isPanning) $ do
+              mouseSpeed' <- fmap 
+                  (if isPanning then const 400 else gw2MouseSpeed) get
+              doScroll <- isPad $ shiftMode
+              x' <- withResidual 0.05 mouseSpeed' (gw2MouseResidual._1)
+                  (rightStick.horiz)
+              y' <- withResidual 0.05 mouseSpeed' (gw2MouseResidual._2)
+                  (rightStick.vert)
+              scroll <- if moveMouse && doScroll
+                then withResidual 0.05 10 gw2ScrollResidual (leftStick.vert)
+                else return 0
               runRobot $ do
                   moveBy x' (negate y')
                   if scroll >= 0
