@@ -568,9 +568,9 @@ listenTick mvarStop mvarLambdaPadData _ = do
     lambdaPadData <- takeMVar mvarLambdaPadData
     lambdaPadData' <- execStateT (lambdaPadData^.lpOnTick.to runLambdaPad)
         lambdaPadData
-    let interval = lambdaPadData'^.lpSpeed
     putMVar mvarLambdaPadData lambdaPadData'
 
+    let interval = lambdaPadData'^.lpSpeed
     aStop <- isEmptyMVar mvarStop
     if aStop
       then do
@@ -579,4 +579,4 @@ listenTick mvarStop mvarLambdaPadData _ = do
       else do
         endTime <- liftIO $ SDL.ticks
         return $ SDL.Reschedule $
-            (floor (1000 / interval) - (endTime - startTime))
+          max 1 $ floor (1000 / interval) - (endTime - startTime)
