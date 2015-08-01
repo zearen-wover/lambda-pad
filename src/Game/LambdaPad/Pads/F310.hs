@@ -4,7 +4,8 @@ import Game.LambdaPad.PadConfig
 
 f310 :: PadConfig
 f310 = PadConfig
-    { buttonConfig = simpleButtonConfig
+    { padName = "f310"
+    , buttonConfig = simpleButtonConfig
           [ (0, a)
           , (1, b)
           , (2, x)

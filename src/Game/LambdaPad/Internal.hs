@@ -187,13 +187,15 @@ newtype GameWriter user a = GameWriter
   deriving (Monad, Functor, Applicative)
 
 data PadConfig = PadConfig
-    { buttonConfig :: Word8 -> ButtonState -> PadState (Maybe Button)
+    { padName :: String
+    , buttonConfig :: Word8 -> ButtonState -> PadState (Maybe Button)
     , dpadConfig :: Word8 -> Word8 -> PadState (Maybe DPad)
     , axisConfig :: Word8 -> Int16 -> PadState (Maybe (Either Stick Trigger))
     }
 
 data GameConfig user = GameConfig
-    { newUserData :: IO user
+    { gameName :: String
+    , newUserData :: IO user
     , onStop :: user -> IO ()
     , onEvents :: GameWriter user ()
     }
@@ -444,18 +446,25 @@ withLambdaPadInner act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
--- | Like 'lambdaPadWithSpeed', but with the speed set to 60 ticks per second.
-lambdaPad :: PadConfig -> GameConfig user -> IO Stop
-lambdaPad = lambdaPadWithSpeed 60
+data LambdaPadConfig = LambdaPadConfig
+    { padConfigs :: [PadConfig]
+    , GameConfigs :: [GameConfig]
+    , speedConfig :: Float
+    }
 
--- | Runs LambdaPad with the given configurations.  This starts it in a
+-- | Runs LambdaPad with the given configuration.  This starts it in a
 -- background thread, but provides the user with a 'Stop' that can be used to
 -- stop. 
 --
 -- Note that this calls SDL.initialize and SDL.quit.  This library is not
 -- intended to be used within other SDL applications.
-lambdaPadWithSpeed :: Float -> PadConfig -> GameConfig user -> IO Stop
-lambdaPadWithSpeed speed padConfig
+
+
+successLambdapad :: LambdaPadConfig -> IO Stop
+successLambdapad (LambdaPadConfig{..}) = do
+
+startLambdapad :: Float -> PadConfig -> GameConfig user -> IO Stop
+startLambdapad speed padConfig
                    (GameConfig{newUserData, onStop, onEvents}) = do
     SDL.initialize [SDL.InitJoystick]
     numSticks <- SDL.numJoysticks

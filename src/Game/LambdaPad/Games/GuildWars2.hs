@@ -39,7 +39,8 @@ makeLenses ''GuildWars2
 
 guildWars2 :: Float -> GameConfig GuildWars2
 guildWars2 mouseSpeed = GameConfig
-    { newUserData = do
+    { gameName = "gw2"
+    , newUserData = do
           xConn <- maybe (fail "Could not connect to X server") return =<<
               X.connect
           screenSize@(width, height) <- getScreenSize xConn

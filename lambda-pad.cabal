@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                lambda-pad
-version:             0.1.0.0
+version:             0.0.1.0
 synopsis:            Allows one to control the mouse and keyboard with a gamepad.
 -- description:         
 homepage:            http://github.com/zearen-wover/lambdapad
@@ -28,12 +28,12 @@ library
   build-depends:
     base >= 4.7 && < 5.0,
     cond >= 0.3 && < 0.5,
+    hsoptions >= 1.0 && < 2.0,
     lens >= 3.0 && < 5.0,
     mtl >= 2.0 && < 3.0,
     sdl2 >= 2.0 && < 3.0,
     transformers >= 0.2 && < 0.5,
-    unordered-containers >= 0.1 && < 0.3,
-    vector >= 0.10 && < 0.11
+    unordered-containers >= 0.1 && < 0.3
   ghc-options: -Wall -funbox-strict-fields -threaded
 
 executable lambdapad
@@ -50,7 +50,6 @@ executable lambdapad
     sdl2 >= 2.0 && < 3.0,
     transformers >= 0.2 && < 0.5,
     unordered-containers >= 0.1 && < 0.3,
-    vector >= 0.10 && < 0.11,
     xhb
   hs-source-dirs: src
   default-language: Haskell2010
