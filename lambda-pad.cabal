@@ -17,40 +17,29 @@ extra-source-files:  README.md
 cabal-version:       >=1.10
 
 library
-  hs-source-dirs: src
+  hs-source-dirs: src/lib
   default-language: Haskell2010
   exposed-modules:
     Game.LambdaPad
     Game.LambdaPad.GameConfig
     Game.LambdaPad.PadConfig
+    Game.LambdaPad.Pads
   other-modules:
     Game.LambdaPad.Internal
   build-depends:
     base >= 4.7 && < 5.0,
-    cond >= 0.3 && < 0.5,
-    hsoptions >= 1.0 && < 2.0,
-    lens >= 3.0 && < 5.0,
-    mtl >= 2.0 && < 3.0,
-    sdl2 >= 2.0 && < 3.0,
-    transformers >= 0.2 && < 0.5,
-    unordered-containers >= 0.1 && < 0.3
+    -- lens >= 3.0 && < 5.0,
+    -- mtl >= 2.0 && < 3.0,
+    -- transformers >= 0.2 && < 0.5,
+    containers >= 0.5 && < 0.6,
+    lambda-pad-core
   ghc-options: -Wall -funbox-strict-fields -threaded
 
-executable lambdapad
-  main-is:             lambdapad.hs
-  other-modules:
-    Game.LambdaPad.Pads.F310
-    Game.LambdaPad.Games.GuildWars2
+executable lambda-pad
+  main-is:             lambda-pad.hs
   build-depends:
     base >= 4.7 && < 5.0,
-    cond >= 0.3 && < 0.5,
-    lens >= 3.0 && < 5.0,
-    mtl >= 2.0 && < 3.0,
-    robot >= 1.3 && < 1.5,
-    sdl2 >= 2.0 && < 3.0,
-    transformers >= 0.2 && < 0.5,
-    unordered-containers >= 0.1 && < 0.3,
-    xhb
-  hs-source-dirs: src
+    lambda-pad
+  hs-source-dirs: src/exe
   default-language: Haskell2010
   ghc-options: -Wall -funbox-strict-fields -threaded
