@@ -2,11 +2,16 @@
 module Game.LambdaPad.Internal where
 
 import Control.Applicative ( (<$>), (<*>), optional )
+import Control.Monad ( when )
 import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Monoid ( mempty, mconcat, (<>) )
-import System.IO ( hPutStrLn, stderr )
+import System.Directory ( doesFileExist, createDirectoryIfMissing )
+import System.FilePath ( dropFileName )
+import System.IO ( IOMode(WriteMode), withFile, hPutStrLn, stderr )
 
 import qualified Config.Dyre as Dyre
+import qualified Config.Dyre.Options as Dyre
+import qualified Config.Dyre.Paths as Dyre
 import qualified Options.Applicative as Opt
 
 import Game.LambdaPad.Core.Run
@@ -88,7 +93,7 @@ realLambdaPad lambdaPadConfig = do
     (LambdaPadFlags{..}) <- Opt.execParser $ 
         Opt.info (Opt.helper <*> lambdaPadFlags lambdaPadConfig) $ mconcat
             [ Opt.fullDesc
-            , Opt.header "lambda-pad - Control KBM games with your gamepad !"
+            , Opt.header "lambda-pad - Control things with your gamepad !"
             ]
     let padConfigSelector = flip fromMaybe ( padConfigByDefault <$> lpfPad) $
           (padConfigByName (padConfigs lambdaPadConfig) <>) $
@@ -101,8 +106,29 @@ showError :: LambdaPadConfig -> String -> LambdaPadConfig
 showError cfg msg = cfg { errorMsg = Just msg }
 
 lambdaPad :: LambdaPadConfig -> IO ()
-lambdaPad = Dyre.wrapMain $ Dyre.defaultParams
-    { Dyre.projectName = "lambda-pad"
-    , Dyre.realMain = realLambdaPad
-    , Dyre.showError = showError
-    }
+lambdaPad lambdaPadConfig = do
+  (_, _, configFilePath, _, _) <- Dyre.getPaths dyreParams
+  configExists <- doesFileExist configFilePath
+  when (not configExists) $ do
+      putStrLn $ "Config missing, writing empty config to " ++
+          show configFilePath
+      createDirectoryIfMissing True $ dropFileName configFilePath
+      withFile configFilePath WriteMode $
+          flip mapM_ defaultConfigFile . hPutStrLn
+  Dyre.wrapMain dyreParams lambdaPadConfig
+  where dyreParams = Dyre.defaultParams
+            { Dyre.projectName = "lambda-pad"
+            , Dyre.realMain = Dyre.withDyreOptions dyreParams . realLambdaPad
+            , Dyre.showError = showError
+            , Dyre.ghcOpts = [ "-threaded" ]
+            }
+
+defaultConfigFile :: [String]
+defaultConfigFile = 
+    [ "import Game.LambdaPad"
+    , ""
+    , "main :: IO ()"
+    , "main = lambdaPad defaultLambdaPadConfig"
+    , "    { gameConfigs = [ ]"
+    , "    }"
+    ]
