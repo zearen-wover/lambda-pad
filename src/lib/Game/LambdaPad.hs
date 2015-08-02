@@ -1,5 +1,12 @@
 module Game.LambdaPad
-  ( LambdaPadConfig, defaultLambdaPadConfig
+  ( LambdaPadConfig
+    ( gameConfigs
+    , padConfigs
+    , defaultGame
+    , defaultPad
+    , defaultSpeed
+    )
+  , defaultLambdaPadConfig
   , lambdaPad
   ) where
 

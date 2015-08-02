@@ -28,18 +28,30 @@ library
     Game.LambdaPad.Internal
   build-depends:
     base >= 4.7 && < 5.0,
-    -- lens >= 3.0 && < 5.0,
-    -- mtl >= 2.0 && < 3.0,
-    -- transformers >= 0.2 && < 0.5,
-    containers >= 0.5 && < 0.6,
-    lambda-pad-core
+    optparse-applicative >= 0.11 && < 0.12,
+    lambda-pad-core,
+    dyre >= 0.8 && < 0.9,
+    robot >= 1.4 && < 2.0,
+    xhb
   ghc-options: -Wall -funbox-strict-fields -threaded
 
 executable lambda-pad
-  main-is:             lambda-pad.hs
+  main-is: lambda-pad.hs
   build-depends:
     base >= 4.7 && < 5.0,
+    cond >= 0.3 && < 0.5,
+    transformers >= 0.2 && < 0.5,
     lambda-pad
   hs-source-dirs: src/exe
   default-language: Haskell2010
   ghc-options: -Wall -funbox-strict-fields -threaded
+
+executable lambda-pad-config-helper
+  main-is: lambda-pad-config-helper.hs
+  build-depends:
+    base >= 4.7 && < 5.0,
+    sdl2 >= 2.0 && < 3.0,
+    vector >= 0.10.9.0 && < 0.11
+  hs-source-dirs: src/exe
+  default-language: Haskell2010
+  ghc-options: -Wall -funbox-strict-fields
