@@ -7,7 +7,7 @@ import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Monoid ( mempty, mconcat, (<>) )
 import System.Directory ( doesFileExist, createDirectoryIfMissing )
 import System.FilePath ( dropFileName )
-import System.IO ( IOMode(WriteMode), withFile, hPutStrLn, stderr )
+import System.IO ( IOMode(WriteMode), withFile, hPutStrLn, )
 
 import qualified Config.Dyre as Dyre
 import qualified Config.Dyre.Options as Dyre
@@ -89,7 +89,7 @@ lambdaPadFlags (LambdaPadConfig{..}) = LambdaPadFlags
 
 realLambdaPad :: LambdaPadConfig -> IO ()
 realLambdaPad lambdaPadConfig = do
-    maybe (return ()) (hPutStrLn stderr) $ errorMsg lambdaPadConfig
+    maybe (return ()) fail $ errorMsg lambdaPadConfig
     (LambdaPadFlags{..}) <- Opt.execParser $ 
         Opt.info (Opt.helper <*> lambdaPadFlags lambdaPadConfig) $ mconcat
             [ Opt.fullDesc
@@ -120,7 +120,7 @@ lambdaPad lambdaPadConfig = do
             { Dyre.projectName = "lambda-pad"
             , Dyre.realMain = Dyre.withDyreOptions dyreParams . realLambdaPad
             , Dyre.showError = showError
-            , Dyre.ghcOpts = [ "-threaded" ]
+            , Dyre.ghcOpts = [ "-threaded", "-funbox-strict-fields" ]
             }
 
 defaultConfigFile :: [String]
