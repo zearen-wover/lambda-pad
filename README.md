@@ -23,7 +23,7 @@ If for some strange reason you want to build this, first build
 The configuration is found along with your other XDG configurations.  This is
 typically `$HOME/.config/lambda-pad/lambda-pad.hs`.  The typical configuration
 just overrides the `gameConfigs` field of `defaultLambdaPadConfig`.  See
-[lambda-pad-games](http://github.com/zearen-wover/lambda-pad-core.git) foe a
+[lambda-pad-games](http://github.com/zearen-wover/lambda-pad-core.git) for a
 walk through of configuring.
 
 TODO: Provide a from scratch walkthrough instead.
@@ -31,16 +31,13 @@ TODO: Provide a from scratch walkthrough instead.
 ## Running
 
 All games have an associated name that can be used when launching lambda-pad
-set via the -g flag.
+using the package's short name.
 
-    lambda-pad -g minecraft
+    lambda-pad minecraft
 
 This flag is required unless `defaultGame` is specified in the config.
 
-TODO: Describe other flags.
-
-TODO: Turn GameConfigs into subcommands and allow users to define their own
-flags.
+TODO: Describe other flags and user flags.
 
 # Documentation
 
@@ -58,20 +55,25 @@ The core contains lenses and data types that form a logical representation of a
 typical game pad.  These are used throughout the application as setters,
 getters, and general symbols for the actual entity on the game pad.
 
-## Game profiles
+## Game packages
 
 TODO: Fill this out.
 
-A game config contains information about how to construct it's state, some
-metadata, and most importantly, and `onEvents` field that takes `GameWriter`
-monad.  This allows the user to add watchers with filters along with a
-`LambdaPad` callback that's a reader of the game pad state
+A final `PackagedGameConfig` is `package`ed from a `PackageConfig`.  These
+contain some metadata, a flag parser,  a `packageGameConfig` field that
+constructs a `GameConfig` from the flags.  A game config has knowledge about how
+to construct and destruct its state, as well as an `onEvents` field that
+contains a `GameWriter` monad.  This allows the user to add watchers with
+filters along with a `LambdaPad` callback that's a reader of the game pad state
 
-## Pad profiles
+## Pad configs
 
 TODO: Fill this out.
 
-This maps the pad hardware to the logical buttons.
+This maps the pad hardware to the logical buttons.  With any luck, you'll never
+have to make one of these as I fill in default pad configs.  If you do, please
+it contribute back to
+[lambda-pad-core](http://github.com/zearen-wover/lambda-pad-core.git) :)
 
-TODO: Write a utility to help write these files.
-
+There's a utility included in this called `lambda-pad-config-helper` that
+displays raw events to help write a `PadConfig` if you really have to.

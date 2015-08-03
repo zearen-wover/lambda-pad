@@ -2,7 +2,6 @@ module Game.LambdaPad
   ( LambdaPadConfig
     ( gameConfigs
     , padConfigs
-    , defaultGame
     , defaultPad
     , defaultSpeed
     )
