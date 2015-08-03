@@ -135,19 +135,23 @@ showError cfg msg = cfg { errorMsg = Just msg }
 lambdaPad :: LambdaPadConfig -> IO ()
 lambdaPad lambdaPadConfig = do
   (_, _, configFilePath, _, _) <- Dyre.getPaths dyreParams
+  let configDirPath = dropFileName configFilePath
   configExists <- doesFileExist configFilePath
   when (not configExists) $ do
       putStrLn $ "Config missing, writing empty config to " ++
           show configFilePath
-      createDirectoryIfMissing True $ dropFileName configFilePath
+      createDirectoryIfMissing True $ configDirPath
       withFile configFilePath WriteMode $
           flip mapM_ defaultConfigFile . hPutStrLn
-  Dyre.wrapMain dyreParams lambdaPadConfig
+  flip Dyre.wrapMain lambdaPadConfig $ dyreParams
+      { Dyre.ghcOpts =
+            [ "-threaded", "-funbox-strict-fields", "-i" ++ configDirPath ]
+      }
   where dyreParams = Dyre.defaultParams
             { Dyre.projectName = "lambda-pad"
             , Dyre.realMain = Dyre.withDyreOptions dyreParams . realLambdaPad
             , Dyre.showError = showError
-            , Dyre.ghcOpts = [ "-threaded", "-funbox-strict-fields" ]
+            , Dyre.includeCurrentDirectory = False
             }
 
 defaultConfigFile :: [String]
